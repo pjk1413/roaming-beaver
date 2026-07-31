@@ -1,0 +1,13 @@
+node_modules
+.next
+.turbo
+.git
+.env
+.env.*
+!.env.example
+designs
+docs
+*.md
+!README.md
+apps/web/.next
+**/*.tsbuildinfo

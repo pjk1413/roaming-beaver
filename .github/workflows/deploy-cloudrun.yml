@@ -1,0 +1,109 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudrun
+  cancel-in-progress: true
+
+env:
+  SERVICE: mystery-trips-web
+  REGION: ${{ vars.GCP_REGION || 'us-central1' }}
+
+jobs:
+  deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${{ env.REGION }}-docker.pkg.dev" --quiet
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          PROJECT_ID="${{ secrets.GCP_PROJECT_ID }}"
+          REPO="${{ vars.GCP_ARTIFACT_REPO || 'mystery-trips' }}"
+          SHA_SHORT="${GITHUB_SHA::7}"
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "full=${IMAGE}:${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+          echo "latest=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg "NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}" \
+            --build-arg "NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
+            --build-arg "NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
+            --build-arg "NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}" \
+            -t "${{ steps.meta.outputs.full }}" \
+            -t "${{ steps.meta.outputs.latest }}" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "${{ steps.meta.outputs.full }}"
+          docker push "${{ steps.meta.outputs.latest }}"
+
+      - name: Deploy to Cloud Run
+        id: deploy
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ steps.meta.outputs.full }}
+          flags: >-
+            --allow-unauthenticated
+            --port=8080
+            --concurrency=80
+            --cpu=1
+            --memory=1Gi
+            --min-instances=0
+            --max-instances=20
+            --cpu-boost
+          env_vars: |
+            NODE_ENV=production
+            ASSEMBLY_FEE_RATE=${{ vars.ASSEMBLY_FEE_RATE || '0.08' }}
+            OPENAI_MODEL=${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          secrets: |
+            DATABASE_URL=DATABASE_URL:latest
+            SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest
+            DUFFEL_API_KEY=DUFFEL_API_KEY:latest
+            STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest
+            STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
+            RESEND_API_KEY=RESEND_API_KEY:latest
+            OPENAI_API_KEY=OPENAI_API_KEY:latest
+            NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:latest
+
+      - name: Summary
+        run: |
+          echo "### Deployed \`${{ env.SERVICE }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Image:** \`${{ steps.meta.outputs.full }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **URL:** ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "If this is the first deploy, set \`NEXT_PUBLIC_APP_URL\` repo variable to that URL and re-run so client-side auth redirects match." >> "$GITHUB_STEP_SUMMARY"

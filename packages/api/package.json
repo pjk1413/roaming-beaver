@@ -1,0 +1,30 @@
+{
+  "name": "@mystery-trips/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mystery-trips/db": "workspace:*",
+    "@mystery-trips/types": "workspace:*",
+    "@supabase/ssr": "^0.12.3",
+    "@supabase/supabase-js": "^2.110.8",
+    "@trpc/server": "^11.4.3",
+    "openai": "^6.49.0",
+    "resend": "^4.6.0",
+    "stripe": "^18.3.0",
+    "superjson": "^2.2.2",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.32",
+    "typescript": "^5.8.3"
+  }
+}

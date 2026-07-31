@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// App profile row. `id` matches Supabase `auth.users.id` (UUID).
+model User {
+  id            String   @id
+  name          String?
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  orders        Order[]
+  tripSearches  TripSearch[]
+}
+
+model Destination {
+  id                   String   @id @default(cuid())
+  city                 String
+  country              String
+  airportCode          String
+  isBeach              Boolean  @default(false)
+  isExoticShortlist    Boolean  @default(false)
+  hasGoodPublicTransit Boolean  @default(true)
+  avgTempByMonthC      Json?
+  beachLat             Float?
+  beachLng             Float?
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  packages DestinationPackage[]
+}
+
+model TripSearch {
+  id          String   @id @default(cuid())
+  homeAirport String
+  departDate  DateTime @db.Date
+  returnDate  DateTime @db.Date
+  travelers   Int
+  /// PENDING → RUNNING → COMPLETE (or FAILED if all slots error)
+  status      String   @default("PENDING")
+  /// Per-slot error messages, e.g. { "BEACH_ESCAPE": "No warm beach offers" }
+  slotErrors  Json?
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  packages DestinationPackage[]
+  orders   Order[]
+}
+
+model DestinationPackage {
+  id               String   @id @default(cuid())
+  searchId         String
+  search           TripSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  destinationId    String
+  destination      Destination @relation(fields: [destinationId], references: [id])
+  slot             String
+  city             String
+  country          String
+  airportCode      String
+  flightJson       Json
+  hotelJson        Json
+  rentalCarJson    Json?
+  itineraryJson    Json
+  subtotalCents    Int
+  assemblyFeeCents Int
+  totalCents       Int
+  currency         String   @default("USD")
+  createdAt        DateTime @default(now())
+
+  orders Order[]
+}
+
+model Order {
+  id                    String   @id @default(cuid())
+  status                String   @default("PENDING_PAYMENT")
+  email                 String
+  userId                String?
+  user                  User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  searchId              String
+  search                TripSearch @relation(fields: [searchId], references: [id])
+  packageId             String
+  package               DestinationPackage @relation(fields: [packageId], references: [id])
+  packageSnapshot       Json
+  travelersJson         Json
+  totalCents            Int
+  currency              String   @default("USD")
+  stripePaymentIntentId String?
+  duffelFlightOrderId   String?
+  duffelStayBookingId   String?
+  duffelCarBookingId    String?
+  failureReason         String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}

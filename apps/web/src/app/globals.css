@@ -1,0 +1,253 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Bricolage Grotesque", sans-serif;
+  --font-body: "Work Sans", sans-serif;
+  --font-mono: "Space Mono", monospace;
+
+  --color-cream: oklch(97% 0.015 75);
+  --color-ink: oklch(22% 0.02 50);
+  --color-ink-soft: oklch(45% 0.02 50);
+  --color-ink-deep: oklch(30% 0.02 50);
+  --color-foam: oklch(98% 0.01 75);
+  --color-accent: oklch(62% 0.19 35);
+  --color-accent-deep: oklch(45% 0.16 35);
+  --color-hue-cheap: oklch(62% 0.19 35);
+  --color-hue-beach: oklch(62% 0.19 200);
+  --color-hue-exotic: oklch(62% 0.19 300);
+  --color-danger: oklch(50% 0.18 25);
+  --color-line: oklch(22% 0.02 50 / 0.08);
+  --color-line-strong: oklch(22% 0.02 50 / 0.15);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  background: var(--color-cream);
+  font-family: var(--font-body);
+}
+
+::selection {
+  background: oklch(62% 0.19 35 / 0.25);
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes popOpen {
+  0% {
+    transform: scale(1) rotate(0deg);
+  }
+  40% {
+    transform: scale(1.04) rotate(-1deg);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes flipReveal {
+  0% {
+    opacity: 0;
+    transform: rotateY(90deg) scale(0.9);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: rotateY(0deg) scale(1);
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+@keyframes dotBounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes cloudDrift {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(140vw);
+  }
+}
+
+@keyframes dashMove {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+
+@keyframes flapIn {
+  0% {
+    opacity: 0;
+    transform: rotateX(-90deg);
+  }
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+    transform: rotateX(0deg);
+  }
+}
+
+@keyframes tickerScroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.4s ease both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease both;
+}
+
+.animate-flip-reveal {
+  animation: flipReveal 0.6s ease both;
+  transform-style: preserve-3d;
+}
+
+.animate-drift {
+  animation: drift 4s ease-in-out infinite;
+}
+
+.animate-pop {
+  animation: popOpen 0.6s ease both;
+}
+
+.animate-cloud {
+  animation: cloudDrift linear infinite;
+}
+
+.animate-dash {
+  animation: dashMove 3s linear infinite;
+}
+
+.animate-flap {
+  animation: flapIn 0.35s ease both;
+  transform-origin: top center;
+  display: inline-block;
+}
+
+.dot-bounce {
+  animation: dotBounce 1.2s ease-in-out infinite;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.btn-primary {
+  background: var(--color-ink);
+  color: var(--color-foam);
+  border: none;
+  border-radius: 100px;
+  padding: 18px 36px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: none;
+  border: 1.5px solid var(--color-line-strong);
+  border-radius: 100px;
+  padding: 12px 24px;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--color-ink);
+  transition: border-color 0.15s ease;
+}
+
+.btn-secondary:hover {
+  border-color: oklch(22% 0.02 50 / 0.35);
+}
+
+.field-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 16px;
+  border-radius: 12px;
+  border: 1.5px solid var(--color-line-strong);
+  font-family: var(--font-body);
+  background: white;
+  color: var(--color-ink);
+  outline: none;
+}
+
+.field-input:focus {
+  border-color: var(--color-accent);
+}
+
+.field-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}

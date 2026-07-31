@@ -1,0 +1,21 @@
+{
+  "name": "mystery-trips",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @mystery-trips/db generate",
+    "db:migrate": "pnpm --filter @mystery-trips/db migrate",
+    "db:seed": "pnpm --filter @mystery-trips/db seed",
+    "db:push": "pnpm --filter @mystery-trips/db push"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  }
+}
