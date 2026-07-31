@@ -153,7 +153,7 @@ Fill Secret Manager values (example):
   printf '%s' 'sk_live_...' | gcloud secrets versions add STRIPE_SECRET_KEY --data-file=-
   # …same for DUFFEL_API_KEY, OPENAI_API_KEY, RESEND_API_KEY, etc.
 
-Then push to main/master (or run the workflow manually).
+Then run the workflow manually: Actions → Deploy to Cloud Run → Run workflow.
 Docs: docs/DEPLOY.md
 ============================================================
 EOF

@@ -1,7 +1,7 @@
 # Deploy to Google Cloud Run (GitHub Actions)
 
-This repo deploys `apps/web` to Cloud Run on every push to `main`/`master`
-(and via **Actions → Deploy to Cloud Run → Run workflow**).
+This repo deploys `apps/web` to Cloud Run **only when you run the workflow manually**
+(**Actions → Deploy to Cloud Run → Run workflow**). It does not deploy on push or merge.
 
 Settings match the product architecture: **`min-instances=0`**, **`--cpu-boost`**,
 **concurrency 80**.
@@ -72,7 +72,7 @@ Use your **Supabase Postgres connection string** for `DATABASE_URL` in productio
 
 ### 5. First deploy
 
-Push to `main`/`master`, or run the workflow manually.
+In GitHub: **Actions → Deploy to Cloud Run → Run workflow**.
 
 After it succeeds, copy the Cloud Run URL from the job summary, then:
 
@@ -94,9 +94,10 @@ DATABASE_URL='postgresql://…' pnpm db:seed
 
 ## Ongoing process
 
-1. Merge / push to `main` (or `master`)
-2. GitHub Action builds the Docker image, pushes to Artifact Registry, deploys Cloud Run
-3. Update Secret Manager when keys rotate — **no redeploy needed** for secret-only changes unless you also change `NEXT_PUBLIC_*` (those require a rebuild)
+1. Merge your changes to the branch you want to deploy from (usually `main`)
+2. **Actions → Deploy to Cloud Run → Run workflow** (pick the branch)
+3. The Action builds the Docker image, pushes to Artifact Registry, deploys Cloud Run
+4. Update Secret Manager when keys rotate — **no redeploy needed** for secret-only changes unless you also change `NEXT_PUBLIC_*` (those require a rebuild)
 
 Manual deploy without GitHub:
 
