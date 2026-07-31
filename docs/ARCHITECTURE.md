@@ -7,7 +7,7 @@
 - **API**: tRPC in `packages/api`, mounted at `app/api/trpc/[trpc]/route.ts`
 - **Streaming search**: `GET /api/search/[searchId]/stream` (NDJSON) + polling fallback
 - **DB**: PostgreSQL + Prisma (`packages/db`)
-  - **Dev**: local Postgres (`docker compose`, port 5433)
+  - **Dev**: local Postgres (`DATABASE_URL`)
   - **Prod**: Supabase Postgres (`DATABASE_URL` connection string)
 - **Auth**: Supabase Auth (email/password + OAuth). App `User` rows use
   `auth.users.id` as primary key and are upserted on session.
@@ -30,10 +30,16 @@
 
 1. `search.start` creates a `TripSearch` row immediately (`PENDING`).
 2. Client navigates to results and opens `/api/search/:id/stream`.
-3. Server runs all three slots with `Promise.all` / per-slot settle, writing each
-   `DestinationPackage` (or `slot_error`) to the NDJSON stream as it finishes.
-4. UI shows three skeleton cards and replaces them independently.
-5. If streaming is buffered by a proxy, client falls back to `search.run` +
+3. Server runs all three slots in parallel. Each slot:
+   - Quotes flights for candidates (concurrency pool)
+   - Hotel-quotes only the cheapest-flight shortlist (~5)
+   - Emits the single cheapest complete package as soon as ready
+4. UI unlocks each card independently as packages stream in.
+5. “Show 3 more” calls `search.reshuffle` — next city per slot, excluding
+   destinations already shown (up to 2 reshuffles).
+6. Itineraries are generated on the trip detail page (`search.ensureItinerary`),
+   not during matching.
+7. If streaming is buffered by a proxy, client falls back to `search.run` +
    `search.status` polling (~1s).
 
 ## Optimistic UI (§8.3)

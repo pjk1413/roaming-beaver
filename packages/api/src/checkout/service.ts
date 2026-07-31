@@ -47,8 +47,8 @@ export async function createPaymentIntent(orderId: string) {
     amount: order.totalCents,
     currency: order.currency.toLowerCase(),
     metadata: { orderId: order.id },
-    receipt_email: order.email,
     automatic_payment_methods: { enabled: true },
+    // Name + email collected in Payment Element; copied onto the PI at confirm
   });
 
   await prisma.order.update({
@@ -77,6 +77,7 @@ export async function createOrderFromCheckout(
   const snapshot = DestinationPackageSchema.parse({
     id: pkg.id,
     slot: pkg.slot,
+    rank: pkg.rank,
     city: pkg.city,
     country: pkg.country,
     airportCode: pkg.airportCode,
@@ -123,15 +124,22 @@ export async function createOrderFromCheckout(
   snapshot.assemblyFeeCents = assemblyFeeCents;
   snapshot.totalCents = totalCents;
 
+  const travelerCount = input.travelerCount ?? 1;
+  const placeholderTravelers = Array.from({ length: travelerCount }, (_, i) => ({
+    givenName: "Traveler",
+    familyName: String(i + 1),
+  }));
+
   const order = await prisma.order.create({
     data: {
       status: "PENDING_PAYMENT",
-      email: input.email,
+      // Replaced from Stripe PaymentIntent billing details after pay
+      email: "pending@checkout.local",
       userId: userId ?? null,
       searchId: input.searchId,
       packageId: input.packageId,
       packageSnapshot: snapshot,
-      travelersJson: input.travelers,
+      travelersJson: placeholderTravelers,
       totalCents,
       currency: snapshot.currency,
     },
@@ -140,10 +148,90 @@ export async function createOrderFromCheckout(
   return order;
 }
 
+function splitName(fullName: string): { givenName: string; familyName: string } {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { givenName: "Traveler", familyName: "1" };
+  if (parts.length === 1) return { givenName: parts[0]!, familyName: parts[0]! };
+  return {
+    givenName: parts[0]!,
+    familyName: parts.slice(1).join(" "),
+  };
+}
+
+/**
+ * Pull buyer email + name from a succeeded PaymentIntent onto the order
+ * (Payment Element billing details / receipt_email).
+ */
+export async function syncBuyerFromStripePaymentIntent(orderId: string) {
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+  const stripe = getStripe();
+  const piId = order.stripePaymentIntentId;
+  if (!stripe || !piId || piId.startsWith("pi_mock_")) {
+    if (order.email === "pending@checkout.local") {
+      return prisma.order.update({
+        where: { id: orderId },
+        data: { email: "guest@example.com" },
+      });
+    }
+    return order;
+  }
+
+  const pi = await stripe.paymentIntents.retrieve(piId, {
+    expand: ["latest_charge"],
+  });
+
+  const charge =
+    typeof pi.latest_charge === "object" && pi.latest_charge
+      ? pi.latest_charge
+      : null;
+  const billing = charge?.billing_details ?? null;
+  const email =
+    (typeof pi.receipt_email === "string" && pi.receipt_email) ||
+    (typeof billing?.email === "string" && billing.email) ||
+    null;
+  const fullName =
+    typeof billing?.name === "string" && billing.name.trim()
+      ? billing.name.trim()
+      : null;
+
+  const existingTravelers = (order.travelersJson as Array<{
+    givenName: string;
+    familyName: string;
+    bornOn?: string;
+  }>) ?? [{ givenName: "Traveler", familyName: "1" }];
+
+  let travelersJson = existingTravelers;
+  if (fullName) {
+    const primary = splitName(fullName);
+    travelersJson = existingTravelers.map((t, i) =>
+      i === 0 ? { ...t, ...primary } : t,
+    );
+  }
+
+  const nextEmail =
+    email && email.includes("@") ? email : order.email;
+
+  if (
+    nextEmail === order.email &&
+    JSON.stringify(travelersJson) === JSON.stringify(existingTravelers)
+  ) {
+    return order;
+  }
+
+  return prisma.order.update({
+    where: { id: orderId },
+    data: {
+      email: nextEmail,
+      travelersJson,
+    },
+  });
+}
+
 /**
  * After Stripe payment succeeds: book via Duffel Balance, email, or refund on failure.
  */
 export async function fulfillOrderAfterPayment(orderId: string) {
+  await syncBuyerFromStripePaymentIntent(orderId);
   const order = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
   if (order.status === "CONFIRMED") return order;
   if (order.status === "FAILED" || order.status === "REFUNDED") return order;

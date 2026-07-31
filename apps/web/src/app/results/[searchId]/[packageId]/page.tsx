@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { DestinationPackage } from "@mystery-trips/types";
 import { trpc } from "@/lib/trpc";
 import {
   SLOT_META,
@@ -16,8 +17,11 @@ export default function TripDetailPage() {
   const { data, isLoading } = trpc.search.get.useQuery({
     searchId: params.searchId,
   });
+  const ensureItinerary = trpc.search.ensureItinerary.useMutation();
   const [origin, setOrigin] = useState("HOME");
   const [travelers, setTravelers] = useState(2);
+  const [pkg, setPkg] = useState<DestinationPackage | null>(null);
+  const itineraryRequested = useRef(false);
 
   useEffect(() => {
     const o = sessionStorage.getItem("rb_origin");
@@ -26,10 +30,27 @@ export default function TripDetailPage() {
     if (t) setTravelers(Number(t) || 2);
   }, []);
 
-  const pkg = useMemo(
-    () => data?.packages.find((p) => p.id === params.packageId),
+  const fromQuery = useMemo(
+    () => data?.packages.find((p) => p.id === params.packageId) ?? null,
     [data, params.packageId],
   );
+
+  useEffect(() => {
+    if (fromQuery) setPkg(fromQuery);
+  }, [fromQuery]);
+
+  // Generate itinerary lazily once (kept off the search hot path)
+  useEffect(() => {
+    if (!fromQuery || fromQuery.itinerary.length > 0) return;
+    if (itineraryRequested.current) return;
+    itineraryRequested.current = true;
+    void ensureItinerary
+      .mutateAsync({ packageId: fromQuery.id })
+      .then((updated) => setPkg(updated))
+      .catch(() => {
+        /* keep empty itinerary */
+      });
+  }, [fromQuery, ensureItinerary]);
 
   if (isLoading || !pkg) {
     return (
@@ -44,6 +65,9 @@ export default function TripDetailPage() {
   const tagline =
     pkg.itinerary[0]?.description ??
     `${pkg.hotel.starRating}★ ${pkg.hotel.name} · flights included.`;
+  const itineraryLoading =
+    pkg.itinerary.length === 0 &&
+    (ensureItinerary.isPending || !ensureItinerary.isError);
 
   return (
     <div className="mx-auto max-w-[920px] px-8 pb-36 pt-10 animate-fade-up">
@@ -101,20 +125,30 @@ export default function TripDetailPage() {
 
       <div className="mb-10">
         <h3 className="mb-4 font-display text-xl font-bold">Itinerary</h3>
-        <ol className="space-y-4 border-l border-[var(--color-line)] pl-5">
-          {pkg.itinerary.map((item, idx) => (
-            <li key={`${item.day}-${idx}`}>
-              <div className="font-mono text-xs font-bold uppercase tracking-[0.03em] text-[var(--color-ink-soft)]">
-                Day {item.day}
-                {item.timeOfDay ? ` · ${item.timeOfDay}` : ""}
-              </div>
-              <div className="font-semibold">{item.title}</div>
-              <div className="text-sm text-[var(--color-ink-soft)]">
-                {item.description}
-              </div>
-            </li>
-          ))}
-        </ol>
+        {itineraryLoading ? (
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            Drafting your day-by-day plan…
+          </p>
+        ) : pkg.itinerary.length === 0 ? (
+          <p className="text-sm text-[var(--color-ink-soft)]">
+            Itinerary unavailable — you can still book the flights and hotel.
+          </p>
+        ) : (
+          <ol className="space-y-4 border-l border-[var(--color-line)] pl-5">
+            {pkg.itinerary.map((item, idx) => (
+              <li key={`${item.day}-${idx}`}>
+                <div className="font-mono text-xs font-bold uppercase tracking-[0.03em] text-[var(--color-ink-soft)]">
+                  Day {item.day}
+                  {item.timeOfDay ? ` · ${item.timeOfDay}` : ""}
+                </div>
+                <div className="font-semibold">{item.title}</div>
+                <div className="text-sm text-[var(--color-ink-soft)]">
+                  {item.description}
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-between border-t border-[var(--color-line)] bg-white px-8 py-[18px]">

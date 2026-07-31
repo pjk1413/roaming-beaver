@@ -4,10 +4,10 @@ import {
   ASSEMBLY_FEE_DEFAULT,
   type DestinationPackage,
   type DestinationSlot,
+  type Flight,
   type TripSearchRequest,
 } from "@mystery-trips/types";
 import { createTravelSupplier, type TravelSupplier } from "../duffel";
-import { generateItinerary } from "../itinerary/generate";
 import { BEACH_WALK_METERS, WARM_TEMP_C, haversineMeters } from "./geo";
 
 type DestinationRow = Destination;
@@ -16,6 +16,10 @@ export type MatchingDeps = {
   supplier?: TravelSupplier;
   listDestinations: () => Promise<DestinationRow[]>;
   assemblyFeeRate?: number;
+  /** Destinations already shown — skip so “try again” gets a new city. */
+  excludeDestinationIds?: string[];
+  /** Rank to stamp on the returned package (0 = first search, 1+ = reshuffles). */
+  rank?: number;
 };
 
 export const ALL_SLOTS: DestinationSlot[] = [
@@ -24,14 +28,13 @@ export const ALL_SLOTS: DestinationSlot[] = [
   "EXOTIC_ADVENTURE",
 ];
 
+/** Parallel Duffel calls per phase — keep low to avoid 429s. */
+const CONCURRENCY = 2;
+/** After flight prices, only hotel-quote the cheapest N routes. */
+const HOTEL_SHORTLIST = 3;
+
 function monthIndex(isoDate: string): number {
   return Number(isoDate.slice(5, 7)) - 1;
-}
-
-function tripNights(departDate: string, returnDate: string): number {
-  const a = new Date(departDate);
-  const b = new Date(returnDate);
-  return Math.max(1, Math.round((b.getTime() - a.getTime()) / 86_400_000));
 }
 
 function cityCoords(d: DestinationRow): { lat: number; lng: number } {
@@ -70,52 +73,67 @@ function candidatesForSlot(
   slot: DestinationSlot,
   all: DestinationRow[],
   departDate: string,
+  excludeIds: Set<string>,
 ): DestinationRow[] {
+  const available = all.filter((d) => !excludeIds.has(d.id));
   if (slot === "BUDGET_GETAWAY") {
-    const budgetCandidates = all.filter(
+    const budgetCandidates = available.filter(
       (d) => !d.isBeach || d.isExoticShortlist === false,
     );
-    return budgetCandidates.length ? budgetCandidates : all;
+    return budgetCandidates.length ? budgetCandidates : available;
   }
   if (slot === "BEACH_ESCAPE") {
-    const beachPool = all.filter((d) => isWarmBeach(d, departDate));
-    return beachPool.length ? beachPool : all.filter((d) => d.isBeach);
+    const beachPool = available.filter((d) => isWarmBeach(d, departDate));
+    return beachPool.length
+      ? beachPool
+      : available.filter((d) => d.isBeach);
   }
-  const exoticPool = all.filter((d) => d.isExoticShortlist);
-  return exoticPool.length ? exoticPool : all;
+  const exoticPool = available.filter((d) => d.isExoticShortlist);
+  return exoticPool.length ? exoticPool : available;
 }
 
-async function assembleForDestination(
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]!, i);
+    }
+  }
+  const n = Math.min(concurrency, Math.max(1, items.length));
+  await Promise.all(Array.from({ length: n }, () => worker()));
+  return results;
+}
+
+type PricedPackage = Omit<DestinationPackage, "itinerary" | "rank"> & {
+  itinerary: [];
+};
+
+async function priceWithFlight(
   slot: DestinationSlot,
   dest: DestinationRow,
+  flight: Flight,
   req: TripSearchRequest,
   supplier: TravelSupplier,
   assemblyFeeRate: number,
-): Promise<DestinationPackage | null> {
+): Promise<PricedPackage | null> {
   const coords = cityCoords(dest);
 
-  const [flights, stays] = await Promise.all([
-    supplier.searchFlights({
-      origin: req.homeAirport,
-      destination: dest.airportCode,
-      departDate: req.departDate,
-      returnDate: req.returnDate,
-      passengers: req.travelers,
-    }),
-    supplier.searchStays({
-      latitude: coords.lat,
-      longitude: coords.lng,
-      radiusKm: slot === "BEACH_ESCAPE" ? 3 : 8,
-      checkIn: req.departDate,
-      checkOut: req.returnDate,
-      guests: req.travelers,
-      minStars: 2.5,
-      maxStars: 3.5,
-    }),
-  ]);
-
-  const flight = flights[0];
-  if (!flight) return null;
+  const stays = await supplier.searchStays({
+    latitude: coords.lat,
+    longitude: coords.lng,
+    radiusKm: slot === "BEACH_ESCAPE" ? 3 : 8,
+    checkIn: req.departDate,
+    checkOut: req.returnDate,
+    guests: req.travelers,
+    minStars: 2.5,
+    maxStars: 3.5,
+  });
 
   let hotel = stays[0];
   if (slot === "BEACH_ESCAPE") {
@@ -149,15 +167,6 @@ async function assembleForDestination(
   const assemblyFeeCents = Math.round(subtotalCents * assemblyFeeRate);
   const totalCents = subtotalCents + assemblyFeeCents;
 
-  const nights = tripNights(req.departDate, req.returnDate);
-  const itinerary = await generateItinerary({
-    city: dest.city,
-    country: dest.country,
-    nights,
-    notes: dest.notes,
-    slot,
-  });
-
   return {
     id: `pkg_tmp_${slot}_${dest.id}`,
     slot,
@@ -168,7 +177,7 @@ async function assembleForDestination(
     flight,
     hotel,
     rentalCar,
-    itinerary,
+    itinerary: [],
     subtotalCents,
     assemblyFeeCents,
     totalCents,
@@ -176,38 +185,87 @@ async function assembleForDestination(
   };
 }
 
-async function pickCheapest(
+/**
+ * Fast path: quote flights for all candidates (pooled), hotel-quote only the
+ * cheapest flight shortlist, return a single cheapest complete package.
+ * Itineraries are deferred to the trip detail page.
+ */
+async function pickCheapestPackage(
   slot: DestinationSlot,
   candidates: DestinationRow[],
   req: TripSearchRequest,
   supplier: TravelSupplier,
   assemblyFeeRate: number,
+  rank: number,
 ): Promise<DestinationPackage | null> {
-  const BATCH = 4;
-  const results: DestinationPackage[] = [];
+  if (candidates.length === 0) return null;
 
-  for (let i = 0; i < candidates.length; i += BATCH) {
-    const batch = candidates.slice(i, i + BATCH);
-    const assembled = await Promise.all(
-      batch.map((d) =>
-        assembleForDestination(slot, d, req, supplier, assemblyFeeRate).catch(
-          (err) => {
-            console.warn(
-              `[matching] ${slot} failed for ${d.airportCode}:`,
-              err instanceof Error ? err.message : err,
-            );
-            return null;
-          },
-        ),
-      ),
-    );
-    for (const pkg of assembled) {
-      if (pkg) results.push(pkg);
+  const t0 = Date.now();
+
+  const flightQuotes = await mapPool(
+    candidates,
+    CONCURRENCY,
+    async (dest) => {
+      try {
+        const flights = await supplier.searchFlights({
+          origin: req.homeAirport,
+          destination: dest.airportCode,
+          departDate: req.departDate,
+          returnDate: req.returnDate,
+          passengers: req.travelers,
+        });
+        const flight = flights[0];
+        return flight ? { dest, flight } : null;
+      } catch (err) {
+        console.warn(
+          `[matching] ${slot} flight failed for ${dest.airportCode}:`,
+          err instanceof Error ? err.message : err,
+        );
+        return null;
+      }
+    },
+  );
+
+  const withFlights = flightQuotes
+    .filter((q): q is { dest: DestinationRow; flight: Flight } => q != null)
+    .sort((a, b) => a.flight.totalCents - b.flight.totalCents);
+
+  if (withFlights.length === 0) return null;
+
+  const shortlist = withFlights.slice(0, HOTEL_SHORTLIST);
+  console.info(
+    `[matching] ${slot}: ${withFlights.length} flights in ${Date.now() - t0}ms → hotel shortlist ${shortlist.length}`,
+  );
+
+  const t1 = Date.now();
+  const hotelQuotes = await mapPool(shortlist, CONCURRENCY, async (q) => {
+    try {
+      return await priceWithFlight(
+        slot,
+        q.dest,
+        q.flight,
+        req,
+        supplier,
+        assemblyFeeRate,
+      );
+    } catch (err) {
+      console.warn(
+        `[matching] ${slot} stay failed for ${q.dest.airportCode}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
     }
-  }
+  });
 
-  results.sort((a, b) => a.totalCents - b.totalCents);
-  return results[0] ?? null;
+  const priced = hotelQuotes.filter((p): p is PricedPackage => p != null);
+  priced.sort((a, b) => a.totalCents - b.totalCents);
+  console.info(
+    `[matching] ${slot}: ${priced.length} complete pkgs in ${Date.now() - t1}ms (total ${Date.now() - t0}ms)`,
+  );
+
+  const best = priced[0];
+  if (!best) return null;
+  return { ...best, rank, itinerary: [] };
 }
 
 function feeFromDeps(deps: MatchingDeps): number {
@@ -217,7 +275,7 @@ function feeFromDeps(deps: MatchingDeps): number {
   );
 }
 
-/** Match a single slot — used by the streaming search path. */
+/** Match the single cheapest package for one slot (streams as soon as ready). */
 export async function matchSlotPackage(
   slot: DestinationSlot,
   req: TripSearchRequest,
@@ -225,21 +283,44 @@ export async function matchSlotPackage(
 ): Promise<DestinationPackage> {
   const supplier = deps.supplier ?? createTravelSupplier();
   const fee = feeFromDeps(deps);
+  const exclude = new Set(deps.excludeDestinationIds ?? []);
+  const rank = deps.rank ?? 0;
   const all = await deps.listDestinations();
-  let pkg = await pickCheapest(
+
+  let pkg = await pickCheapestPackage(
     slot,
-    candidatesForSlot(slot, all, req.departDate),
+    candidatesForSlot(slot, all, req.departDate, exclude),
     req,
     supplier,
     fee,
+    rank,
   );
-  if (!pkg) {
-    pkg = await pickCheapest(slot, all, req, supplier, fee);
+
+  if (!pkg && exclude.size > 0) {
+    // Exhausted filtered pool — try remaining destinations outside slot filter
+    pkg = await pickCheapestPackage(
+      slot,
+      all.filter((d) => !exclude.has(d.id)),
+      req,
+      supplier,
+      fee,
+      rank,
+    );
   }
+
   if (!pkg) {
     throw new Error(`No valid offers found for ${slot}`);
   }
   return pkg;
+}
+
+/** @deprecated Prefer matchSlotPackage — kept for callers expecting an array. */
+export async function matchSlotPackages(
+  slot: DestinationSlot,
+  req: TripSearchRequest,
+  deps: MatchingDeps,
+): Promise<DestinationPackage[]> {
+  return [await matchSlotPackage(slot, req, deps)];
 }
 
 export async function matchThreePackages(

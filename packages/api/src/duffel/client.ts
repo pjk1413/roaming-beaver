@@ -29,6 +29,7 @@ export class DuffelClient implements TravelSupplier {
     method: string,
     path: string,
     body?: unknown,
+    attempt = 0,
   ): Promise<T> {
     const res = await fetch(`${DUFFEL_BASE}${path}`, {
       method,
@@ -41,10 +42,36 @@ export class DuffelClient implements TravelSupplier {
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    const json = (await res.json()) as { data?: T; errors?: unknown };
+    const text = await res.text();
+    let json: { data?: T; errors?: unknown } = {};
+    if (text) {
+      try {
+        json = JSON.parse(text) as { data?: T; errors?: unknown };
+      } catch {
+        if (!res.ok) {
+          throw new Error(
+            `Duffel ${method} ${path} failed (${res.status}): ${text.slice(0, 300)}`,
+          );
+        }
+        throw new Error(
+          `Duffel ${method} ${path}: expected JSON, got: ${text.slice(0, 200)}`,
+        );
+      }
+    }
+
+    if (res.status === 429 && attempt < 3) {
+      const reset = res.headers.get("ratelimit-reset");
+      const resetMs = reset ? Date.parse(reset) - Date.now() : NaN;
+      const waitMs = Number.isFinite(resetMs)
+        ? Math.min(Math.max(resetMs, 500), 15_000)
+        : 1000 * 2 ** attempt;
+      await new Promise((r) => setTimeout(r, waitMs));
+      return this.request(method, path, body, attempt + 1);
+    }
+
     if (!res.ok) {
       throw new Error(
-        `Duffel ${method} ${path} failed (${res.status}): ${JSON.stringify(json.errors ?? json)}`,
+        `Duffel ${method} ${path} failed (${res.status}): ${JSON.stringify(json.errors ?? json) || text.slice(0, 300)}`,
       );
     }
     return json.data as T;
@@ -126,6 +153,7 @@ export class DuffelClient implements TravelSupplier {
         };
         cheapest_rate_total_amount?: string;
         cheapest_rate_currency?: string;
+        cheapest_rate_id?: string;
         rooms?: Array<{
           rates?: Array<{
             id: string;
@@ -136,7 +164,7 @@ export class DuffelClient implements TravelSupplier {
       }>;
     }>("POST", "/stays/search", {
       data: {
-        rooms: params.guests,
+        rooms: 1,
         guests: Array.from({ length: params.guests }, () => ({ type: "adult" })),
         check_in_date: params.checkIn,
         check_out_date: params.checkOut,
@@ -162,13 +190,17 @@ export class DuffelClient implements TravelSupplier {
             dollarsToCents(a.total_amount) - dollarsToCents(b.total_amount),
         )[0] ?? null;
 
-      if (!rate) continue;
+      const amount = rate?.total_amount ?? result.cheapest_rate_total_amount;
+      const currency = rate?.total_currency ?? result.cheapest_rate_currency;
+      const rateId = rate?.id ?? result.cheapest_rate_id ?? result.id;
+      if (!amount || !currency) continue;
+
       const coords = result.accommodation.location?.geographic_coordinates;
       if (!coords) continue;
 
       const addr = result.accommodation.location?.address;
       hotels.push({
-        duffelRateId: rate.id,
+        duffelRateId: rateId,
         duffelSearchResultId: result.id,
         name: result.accommodation.name,
         starRating: rating,
@@ -179,8 +211,8 @@ export class DuffelClient implements TravelSupplier {
         lng: coords.longitude,
         checkIn: params.checkIn,
         checkOut: params.checkOut,
-        currency: rate.total_currency,
-        totalCents: dollarsToCents(rate.total_amount),
+        currency,
+        totalCents: dollarsToCents(amount),
       });
     }
 

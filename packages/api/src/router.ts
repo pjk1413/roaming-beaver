@@ -10,18 +10,23 @@ import {
   createOrderFromCheckout,
   createPaymentIntent,
   fulfillOrderAfterPayment,
+  syncBuyerFromStripePaymentIntent,
   toOrderDto,
 } from "./checkout/service";
 import {
   createSearchRecord,
   getSearchStatus,
   runSearchSlots,
+  reshuffleSearchSlots,
   requestFromSearch,
+  ensurePackageItinerary,
+  MAX_RESHUFFLES,
 } from "./search/stream";
 
 function mapPackageRow(row: {
   id: string;
   slot: string;
+  rank: number;
   city: string;
   country: string;
   airportCode: string;
@@ -38,6 +43,7 @@ function mapPackageRow(row: {
   return DestinationPackageSchema.parse({
     id: row.id,
     slot: row.slot,
+    rank: row.rank,
     city: row.city,
     country: row.country,
     airportCode: row.airportCode,
@@ -91,7 +97,9 @@ export const appRouter = router({
       .query(async ({ input }) => {
         const search = await prisma.tripSearch.findUnique({
           where: { id: input.searchId },
-          include: { packages: true },
+          include: {
+            packages: { orderBy: [{ slot: "asc" }, { rank: "asc" }] },
+          },
         });
         if (!search) return null;
 
@@ -115,12 +123,41 @@ export const appRouter = router({
           return getSearchStatus(search.id);
         }
         if (search.status === "PENDING") {
-          const req = requestFromSearch(search);
-          // Fire-and-forget for polling clients; stream route awaits.
-          void runSearchSlots(search.id, req, async () => {});
+          const claimed = await prisma.tripSearch.updateMany({
+            where: { id: search.id, status: "PENDING" },
+            data: { status: "RUNNING" },
+          });
+          if (claimed.count > 0) {
+            const req = requestFromSearch(search);
+            void runSearchSlots(search.id, req, async () => {}).catch((err) => {
+              console.error("[search.run] matcher failed", err);
+            });
+          }
         }
         return getSearchStatus(search.id);
       }),
+
+    /**
+     * Fetch next-cheapest city per slot (excludes already-shown destinations).
+     * Call after initial search completes — up to MAX_RESHUFFLES times.
+     */
+    reshuffle: publicProcedure
+      .input(z.object({ searchId: z.string() }))
+      .mutation(async ({ input }) => {
+        const result = await reshuffleSearchSlots(input.searchId, async () => {});
+        const status = await getSearchStatus(input.searchId);
+        return {
+          ...status,
+          packages: result.packages,
+          reshufflesUsed: result.reshufflesUsed,
+          maxReshuffles: MAX_RESHUFFLES,
+        };
+      }),
+
+    /** Generate itinerary on demand for trip detail (kept off the hot search path). */
+    ensureItinerary: publicProcedure
+      .input(z.object({ packageId: z.string() }))
+      .mutation(async ({ input }) => ensurePackageItinerary(input.packageId)),
   }),
 
   checkout: router({
@@ -149,6 +186,8 @@ export const appRouter = router({
           where: { id: input.orderId },
         });
         if (!order) throw new Error("Order not found");
+
+        await syncBuyerFromStripePaymentIntent(order.id);
 
         if (order.status === "PENDING_PAYMENT") {
           await prisma.order.update({

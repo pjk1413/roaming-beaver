@@ -1,17 +1,21 @@
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
-import { fulfillOrderAfterPayment } from "@mystery-trips/api";
+import {
+  fulfillOrderAfterPayment,
+  syncBuyerFromStripePaymentIntent,
+} from "@mystery-trips/api";
 import { prisma } from "@mystery-trips/db";
 
 export async function POST(req: Request) {
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
   const key = process.env.STRIPE_SECRET_KEY;
 
+  // Local/mock checkout fulfills via checkout.confirm — webhook is optional.
   if (!secret || !key) {
-    return NextResponse.json(
-      { error: "Stripe webhook not configured" },
-      { status: 501 },
-    );
+    return NextResponse.json({
+      received: true,
+      configured: false,
+    });
   }
 
   const stripe = new Stripe(key);
@@ -38,6 +42,8 @@ export async function POST(req: Request) {
         data: { status: "PAID", stripePaymentIntentId: pi.id },
       });
       try {
+        // Email + name from Payment Element billing details / receipt_email
+        await syncBuyerFromStripePaymentIntent(orderId);
         await fulfillOrderAfterPayment(orderId);
       } catch (err) {
         console.error("[stripe webhook] fulfill failed", err);

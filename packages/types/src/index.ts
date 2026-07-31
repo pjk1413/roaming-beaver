@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export * from "./dates";
+
 export const DestinationSlotSchema = z.enum([
   "BUDGET_GETAWAY",
   "BEACH_ESCAPE",
@@ -77,6 +79,8 @@ export type ItineraryItem = z.infer<typeof ItineraryItemSchema>;
 export const DestinationPackageSchema = z.object({
   id: z.string(),
   slot: DestinationSlotSchema,
+  /** 0 = first result; 1–2 = fetched on “try again” */
+  rank: z.number().int().min(0).max(2).default(0),
   city: z.string(),
   country: z.string(),
   airportCode: z.string(),
@@ -92,25 +96,20 @@ export const DestinationPackageSchema = z.object({
 });
 export type DestinationPackage = z.infer<typeof DestinationPackageSchema>;
 
+/** One package per slot initially; reshuffles fetch the next city on demand */
 export const TripSearchResultSchema = z.object({
   searchId: z.string(),
-  packages: z.array(DestinationPackageSchema).length(3),
+  packages: z.array(DestinationPackageSchema).min(1).max(9),
 });
 export type TripSearchResult = z.infer<typeof TripSearchResultSchema>;
+
+export const PACKAGES_PER_SLOT = 1 as const;
 
 export const CheckoutRequestSchema = z.object({
   searchId: z.string(),
   packageId: z.string(),
-  email: z.string().email(),
-  travelers: z
-    .array(
-      z.object({
-        givenName: z.string().min(1),
-        familyName: z.string().min(1),
-        bornOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      }),
-    )
-    .min(1),
+  /** Used for placeholder passenger slots; names/email come from Stripe after pay. */
+  travelerCount: z.number().int().min(1).max(9).default(1),
 });
 export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>;
 

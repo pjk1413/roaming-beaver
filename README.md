@@ -32,8 +32,7 @@ cp .env apps/web/.env && cp .env packages/db/.env
 
 # Optional travel/payment keys — without them, mocks/fallbacks are used.
 
-# 3. Local database
-docker compose up -d   # Postgres on host :5433
+# 3. Local database (your own Postgres — set DATABASE_URL accordingly)
 pnpm db:push
 pnpm db:seed
 

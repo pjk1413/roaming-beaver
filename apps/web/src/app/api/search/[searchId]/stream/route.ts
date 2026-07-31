@@ -3,6 +3,7 @@ import {
   getSearchStatus,
   requestFromSearch,
   runSearchSlots,
+  isMockTravelSupplier,
   type SearchStreamEvent,
 } from "@mystery-trips/api";
 
@@ -11,8 +12,8 @@ export const dynamic = "force-dynamic";
 
 /**
  * Progressive search stream (NDJSON).
- * Client should open this after `search.start` and render skeleton cards,
- * replacing each as `{ type: "package" }` events arrive.
+ * One long-lived connection: claim + run matcher (emitting events), or follow
+ * an in-flight run with slow DB polling. Client should open this once per search.
  */
 export async function GET(
   _req: Request,
@@ -33,18 +34,23 @@ export async function GET(
 
   const encoder = new TextEncoder();
   let closed = false;
+  const mock = isMockTravelSupplier();
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: SearchStreamEvent) => {
         if (closed) return;
-        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          closed = true;
+        }
       };
 
       try {
-        send({ type: "started", searchId });
+        send({ type: "started", searchId, mock });
 
-        // Already finished — replay stored packages
+        // Already finished — replay once and close
         if (search.status === "COMPLETE" || search.status === "FAILED") {
           const status = await getSearchStatus(searchId);
           for (const pkg of status?.packages ?? []) {
@@ -58,30 +64,46 @@ export async function GET(
               message,
             });
           }
-          send({ type: "done", searchId });
+          send({ type: "done", searchId, mock });
           controller.close();
           return;
         }
 
-        // Already running with some packages — emit what we have, then poll DB
-        // until complete (another request may own the runner).
+        // Another worker owns matching — follow slowly via DB
         if (search.status === "RUNNING") {
-          for (const row of search.packages) {
-            const status = await getSearchStatus(searchId);
-            const pkg = status?.packages.find((p) => p.id === row.id);
-            if (pkg) send({ type: "package", package: pkg });
-          }
-          await pollUntilDone(searchId, send);
-          controller.close();
+          await pollUntilDone(searchId, send, () => closed);
+          if (!closed) controller.close();
           return;
         }
 
-        // PENDING — we own the run
+        // PENDING — claim and run (emit live as each slot finishes)
+        const claimed = await prisma.tripSearch.updateMany({
+          where: { id: searchId, status: "PENDING" },
+          data: { status: "RUNNING" },
+        });
+
+        if (claimed.count === 0) {
+          await pollUntilDone(searchId, send, () => closed);
+          if (!closed) controller.close();
+          return;
+        }
+
         const req = requestFromSearch(search);
         await runSearchSlots(searchId, req, async (event) => {
-          send(event);
+          if (event.type === "started" || event.type === "done") {
+            send({ ...event, mock });
+          } else {
+            send(event);
+          }
         });
-        controller.close();
+
+        if (!closed) {
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+        }
       } catch (err) {
         console.error("[search/stream]", err);
         if (!closed) {
@@ -90,8 +112,12 @@ export async function GET(
             slot: "BUDGET_GETAWAY",
             message: err instanceof Error ? err.message : "Stream failed",
           });
-          send({ type: "done", searchId });
-          controller.close();
+          send({ type: "done", searchId, mock });
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
         }
       }
     },
@@ -110,13 +136,19 @@ export async function GET(
   });
 }
 
+/** Slow follower poll — only used when this connection does not own the matcher. */
 async function pollUntilDone(
   searchId: string,
   send: (event: SearchStreamEvent) => void,
+  isClosed: () => boolean,
 ) {
   const seen = new Set<string>();
   const seenErrors = new Set<string>();
+  const mock = isMockTravelSupplier();
+
   for (let i = 0; i < 120; i++) {
+    if (isClosed()) return;
+
     const status = await getSearchStatus(searchId);
     if (!status) break;
 
@@ -138,10 +170,12 @@ async function pollUntilDone(
     }
 
     if (status.status === "COMPLETE" || status.status === "FAILED") {
-      send({ type: "done", searchId });
+      send({ type: "done", searchId, mock });
       return;
     }
-    await new Promise((r) => setTimeout(r, 1000));
+
+    await new Promise((r) => setTimeout(r, 1500));
   }
-  send({ type: "done", searchId });
+
+  send({ type: "done", searchId, mock });
 }

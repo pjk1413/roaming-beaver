@@ -1,8 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import {
+  MIN_TRIP_NIGHTS,
+  calendarNights,
+  minDepartDate,
+  minReturnDate,
+} from "@mystery-trips/types";
 import { trpc } from "@/lib/trpc";
+import { AirportAutocomplete } from "@/components/airport-autocomplete";
 
 export default function SearchPage() {
   const router = useRouter();
@@ -15,18 +22,41 @@ export default function SearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const earliestDepart = useMemo(() => minDepartDate(), []);
+  const earliestReturn = departDate
+    ? minReturnDate(departDate)
+    : minReturnDate(earliestDepart);
+
+  function onDepartChange(next: string) {
+    setDepartDate(next);
+    if (next) {
+      const minRet = minReturnDate(next);
+      setReturnDate((prev) => (!prev || prev < minRet ? minRet : prev));
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!homeAirport.trim()) {
-      setError("Add your home airport so we can price real flights.");
+    if (!homeAirport.trim() || homeAirport.trim().length !== 3) {
+      setError("Pick a home airport from the suggestions.");
       return;
     }
     if (!departDate) {
       setError("Pick a departure date.");
       return;
     }
-    if (!returnDate || returnDate <= departDate) {
-      setError("Pick a return date after departure.");
+    if (departDate < earliestDepart) {
+      setError("Departure must be tomorrow or later.");
+      return;
+    }
+    if (!returnDate) {
+      setError("Pick a return date.");
+      return;
+    }
+    if (calendarNights(departDate, returnDate) < MIN_TRIP_NIGHTS) {
+      setError(
+        `Trips need at least ${MIN_TRIP_NIGHTS} nights — pick a later return.`,
+      );
       return;
     }
 
@@ -35,7 +65,7 @@ export default function SearchPage() {
     setSubmitting(true);
 
     const payload = {
-      homeAirport: homeAirport.trim().slice(0, 3),
+      homeAirport: homeAirport.trim().toUpperCase(),
       departDate,
       returnDate,
       travelers,
@@ -92,12 +122,9 @@ export default function SearchPage() {
       <form onSubmit={onSubmit} className="flex flex-col gap-6">
         <div>
           <label className="field-label">Home airport</label>
-          <input
-            className="field-input"
+          <AirportAutocomplete
             value={homeAirport}
-            onChange={(e) => setHomeAirport(e.target.value.toUpperCase())}
-            placeholder="e.g. JFK — New York"
-            maxLength={3}
+            onChange={setHomeAirport}
             required
           />
         </div>
@@ -109,7 +136,8 @@ export default function SearchPage() {
               type="date"
               className="field-input text-[15px]"
               value={departDate}
-              onChange={(e) => setDepartDate(e.target.value)}
+              min={earliestDepart}
+              onChange={(e) => onDepartChange(e.target.value)}
               required
             />
           </div>
@@ -119,9 +147,13 @@ export default function SearchPage() {
               type="date"
               className="field-input text-[15px]"
               value={returnDate}
+              min={earliestReturn}
               onChange={(e) => setReturnDate(e.target.value)}
               required
             />
+            <p className="mt-1.5 text-[12px] text-[var(--color-ink-soft)]">
+              Minimum {MIN_TRIP_NIGHTS} nights
+            </p>
           </div>
         </div>
 

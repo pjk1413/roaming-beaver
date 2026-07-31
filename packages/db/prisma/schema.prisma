@@ -64,6 +64,8 @@ model DestinationPackage {
   destinationId    String
   destination      Destination @relation(fields: [destinationId], references: [id])
   slot             String
+  /// 0 = cheapest shown first; 1–2 = prefetched “show more” alternates (distinct cities)
+  rank             Int      @default(0)
   city             String
   country          String
   airportCode      String
@@ -78,6 +80,8 @@ model DestinationPackage {
   createdAt        DateTime @default(now())
 
   orders Order[]
+
+  @@index([searchId, slot, rank])
 }
 
 model Order {

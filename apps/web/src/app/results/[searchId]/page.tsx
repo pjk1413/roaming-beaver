@@ -1,30 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import type { DestinationPackage, DestinationSlot } from "@mystery-trips/types";
 import { trpc } from "@/lib/trpc";
 import { SLOT_META, formatMoney, nightsBetween } from "@/lib/format";
 import { FlapText } from "@/components/flap-text";
 
-const MAX_RESHUFFLES = 2;
 const SLOTS: DestinationSlot[] = [
   "BUDGET_GETAWAY",
   "BEACH_ESCAPE",
   "EXOTIC_ADVENTURE",
 ];
 
+const MAX_RESHUFFLES = 2;
+
 type SlotState =
   | { status: "loading" }
   | { status: "ready"; pkg: DestinationPackage }
   | { status: "error"; message: string };
 
+function isMockPackage(pkg: DestinationPackage): boolean {
+  return (
+    pkg.flight.duffelOfferId.startsWith("off_mock_") ||
+    pkg.hotel.duffelRateId.startsWith("rate_mock_")
+  );
+}
+
+function isLiveFlightsMockHotels(pkg: DestinationPackage): boolean {
+  return (
+    !pkg.flight.duffelOfferId.startsWith("off_mock_") &&
+    pkg.hotel.duffelRateId.startsWith("rate_mock_")
+  );
+}
+
 export default function ResultsPage() {
   const params = useParams<{ searchId: string }>();
-  const router = useRouter();
-  const startSearch = trpc.search.start.useMutation();
   const runSearch = trpc.search.run.useMutation();
+  const reshuffle = trpc.search.reshuffle.useMutation();
   const utils = trpc.useUtils();
 
   const [slots, setSlots] = useState<Record<DestinationSlot, SlotState>>({
@@ -38,7 +52,23 @@ export default function ResultsPage() {
   const [origin, setOrigin] = useState("HOME");
   const [travelers, setTravelers] = useState(2);
   const [fatal, setFatal] = useState<string | null>(null);
-  const streamStarted = useRef(false);
+  const [mockTravel, setMockTravel] = useState(false);
+  const [partialMock, setPartialMock] = useState(false);
+
+  const applyPackageRef = useRef((pkg: DestinationPackage) => {
+    setSlots((prev) => ({
+      ...prev,
+      [pkg.slot]: { status: "ready", pkg },
+    }));
+    if (isMockPackage(pkg)) setMockTravel(true);
+    if (isLiveFlightsMockHotels(pkg)) setPartialMock(true);
+  });
+  const applyErrorRef = useRef((slot: DestinationSlot, message: string) => {
+    setSlots((prev) => ({
+      ...prev,
+      [slot]: { status: "error", message },
+    }));
+  });
 
   useEffect(() => {
     const stored = sessionStorage.getItem("rb_origin");
@@ -47,131 +77,84 @@ export default function ResultsPage() {
     if (t) setTravelers(Number(t) || 2);
   }, []);
 
-  const applyPackage = useCallback((pkg: DestinationPackage) => {
-    setSlots((prev) => ({
-      ...prev,
-      [pkg.slot]: { status: "ready", pkg },
-    }));
-  }, []);
-
-  const applyError = useCallback((slot: DestinationSlot, message: string) => {
-    setSlots((prev) => ({
-      ...prev,
-      [slot]: { status: "error", message },
-    }));
-  }, []);
-
-  // Prefer streaming; fall back to 1s polling if the stream stalls
+  // Kick matcher once, then poll status every 2s — no NDJSON stream reconnect loop.
   useEffect(() => {
-    if (streamStarted.current) return;
-    streamStarted.current = true;
-
     let cancelled = false;
-    let gotLiveChunk = false;
-    const ac = new AbortController();
+    const searchId = params.searchId;
+    const seen = new Set<string>();
 
-    async function consumeStream() {
-      try {
-        const res = await fetch(`/api/search/${params.searchId}/stream`, {
-          signal: ac.signal,
-          headers: { Accept: "application/x-ndjson" },
-        });
-        if (!res.ok || !res.body) {
-          throw new Error(`Stream failed (${res.status})`);
-        }
+    async function tick() {
+      const status = await utils.search.status.fetch({ searchId });
+      if (!status || cancelled) return false;
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (!cancelled) {
-          const { done: streamDone, value } = await reader.read();
-          if (streamDone) break;
-          gotLiveChunk = true;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            const event = JSON.parse(line) as {
-              type: string;
-              package?: DestinationPackage;
-              slot?: DestinationSlot;
-              message?: string;
-            };
-            if (event.type === "package" && event.package) {
-              applyPackage(event.package);
-            } else if (event.type === "slot_error" && event.slot) {
-              applyError(event.slot, event.message ?? "Unavailable");
-            } else if (event.type === "done") {
-              setDone(true);
-            }
-          }
-        }
-        if (!cancelled) setDone(true);
-      } catch (err) {
-        if (cancelled || ac.signal.aborted) return;
-        console.warn("[results] stream failed, polling:", err);
-        await pollFallback();
+      for (const pkg of status.packages) {
+        if (seen.has(pkg.id)) continue;
+        seen.add(pkg.id);
+        applyPackageRef.current(pkg);
       }
+      for (const [slot, message] of Object.entries(status.slotErrors)) {
+        applyErrorRef.current(slot as DestinationSlot, message);
+      }
+
+      if (status.status === "COMPLETE" || status.status === "FAILED") {
+        setDone(true);
+        if (status.packages.length === 0) {
+          setFatal("No packages found for these dates.");
+        }
+        return true;
+      }
+      return false;
     }
 
-    async function pollFallback() {
+    async function run() {
       try {
-        await runSearch.mutateAsync({ searchId: params.searchId });
+        await runSearch.mutateAsync({ searchId });
       } catch {
-        /* may already be running */
+        /* already running / raced */
       }
+      if (cancelled) return;
 
-      for (let i = 0; i < 90 && !cancelled; i++) {
-        const status = await utils.search.status.fetch({
-          searchId: params.searchId,
-        });
-        if (!status) {
-          setFatal("Search not found.");
-          return;
+      if (await tick()) return;
+
+      while (!cancelled) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (cancelled) return;
+        try {
+          if (await tick()) return;
+        } catch (err) {
+          console.warn("[results] status poll failed:", err);
         }
-        for (const pkg of status.packages) {
-          applyPackage(pkg);
-        }
-        for (const [slot, message] of Object.entries(status.slotErrors)) {
-          applyError(slot as DestinationSlot, message);
-        }
-        if (status.status === "COMPLETE" || status.status === "FAILED") {
-          setDone(true);
-          if (status.packages.length === 0) {
-            setFatal("No packages found for these dates.");
-          }
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 1000));
       }
-      if (!gotLiveChunk) setDone(true);
     }
 
-    void consumeStream();
+    void run();
     return () => {
       cancelled = true;
-      ac.abort();
     };
-  }, [params.searchId, applyPackage, applyError, utils.search.status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one poller per searchId
+  }, [params.searchId]);
 
-  const canReshuffle = reshufflesUsed < MAX_RESHUFFLES && done;
+  const canReshuffle =
+    done && reshufflesUsed < MAX_RESHUFFLES && !reshuffle.isPending;
 
   async function onReshuffle() {
     if (!canReshuffle) return;
-    const raw = sessionStorage.getItem("rb_last_search");
-    if (!raw) return;
-    const last = JSON.parse(raw) as {
-      homeAirport: string;
-      departDate: string;
-      returnDate: string;
-      travelers: number;
-    };
-    setReshufflesUsed((n) => n + 1);
-    streamStarted.current = false;
-    const { searchId } = await startSearch.mutateAsync(last);
-    router.push(`/results/${searchId}`);
+    setOpened({});
+    try {
+      const result = await reshuffle.mutateAsync({
+        searchId: params.searchId,
+      });
+      setReshufflesUsed(result.reshufflesUsed);
+      for (const pkg of result.packages) {
+        applyPackageRef.current(pkg);
+      }
+      setDone(true);
+    } catch (err) {
+      setDone(true);
+      setFatal(
+        err instanceof Error ? err.message : "Could not find more trips.",
+      );
+    }
   }
 
   if (fatal) {
@@ -189,12 +172,37 @@ export default function ResultsPage() {
 
   return (
     <div className="mx-auto max-w-[1100px] px-8 pb-[100px] pt-12 text-center animate-fade-up">
+      {mockTravel && (
+        <div className="mb-6 rounded-xl border border-[var(--color-line-strong)] bg-white px-4 py-3 text-left text-sm text-[var(--color-ink-soft)]">
+          <span className="font-mono text-xs font-bold uppercase tracking-[0.04em] text-[var(--color-accent)]">
+            {partialMock ? "Partial mock data" : "Mock travel data"}
+          </span>
+          <span className="mt-1 block">
+            {partialMock ? (
+              <>
+                Hotels (and cars, if needed) are simulated — Duffel Stays isn’t
+                enabled on this API key. Flights are live. Contact Duffel sales
+                to enable Stays for real hotel rates.
+              </>
+            ) : (
+              <>
+                No real Duffel key — prices and flights are simulated. Set{" "}
+                <code className="font-mono text-[12px]">DUFFEL_API_KEY</code> in{" "}
+                <code className="font-mono text-[12px]">apps/web/.env</code> for
+                live offers.
+              </>
+            )}
+          </span>
+        </div>
+      )}
       <div className="mb-2.5 font-mono text-[13px] font-bold text-[var(--color-accent)]">
         FROM {origin}
       </div>
       <h2 className="mb-3 font-display text-[34px] font-bold tracking-[-0.02em]">
         {done && readyCount === 3
-          ? "Three trips, matched and ready."
+          ? reshufflesUsed > 0
+            ? "Three more options, ready to open."
+            : "Three trips, matched and ready."
           : "Matching your trips…"}
       </h2>
       <p className="mb-12 text-base text-[var(--color-ink-soft)]">
@@ -236,11 +244,12 @@ export default function ResultsPage() {
           <button
             type="button"
             onClick={onReshuffle}
-            disabled={startSearch.isPending}
+            disabled={reshuffle.isPending}
             className="btn-secondary"
           >
-            Not feeling these? Show 3 more ({MAX_RESHUFFLES - reshufflesUsed}{" "}
-            left)
+            {reshuffle.isPending
+              ? "Finding 3 more…"
+              : `Not feeling these? Show 3 more (${MAX_RESHUFFLES - reshufflesUsed} left)`}
           </button>
         ) : done && reshufflesUsed >= MAX_RESHUFFLES ? (
           <p className="text-[13px] text-[var(--color-ink-soft)]">

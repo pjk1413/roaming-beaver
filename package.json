@@ -8,7 +8,8 @@
     "db:generate": "pnpm --filter @mystery-trips/db generate",
     "db:migrate": "pnpm --filter @mystery-trips/db migrate",
     "db:seed": "pnpm --filter @mystery-trips/db seed",
-    "db:push": "pnpm --filter @mystery-trips/db push"
+    "db:push": "pnpm --filter @mystery-trips/db push",
+    "airports:sync": "node scripts/sync-airports.mjs"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

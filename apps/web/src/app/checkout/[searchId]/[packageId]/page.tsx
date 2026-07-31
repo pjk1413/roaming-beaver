@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import {
   Elements,
@@ -23,86 +23,53 @@ export default function CheckoutPage() {
     searchId: params.searchId,
   });
   const startCheckout = trpc.checkout.start.useMutation();
-  const confirmCheckout = trpc.checkout.confirm.useMutation();
 
   const pkg = useMemo(
     () => search?.packages.find((p) => p.id === params.packageId),
     [search, params.packageId],
   );
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [card, setCard] = useState("");
-  const [expiry, setExpiry] = useState("");
-  const [cvc, setCvc] = useState("");
   const [travelers, setTravelers] = useState(2);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
   const [mock, setMock] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [booking, setBooking] = useState(false);
+  const [booting, setBooting] = useState(true);
+  const started = useRef(false);
 
   useEffect(() => {
     const t = sessionStorage.getItem("rb_travelers");
     if (t) setTravelers(Number(t) || 2);
   }, []);
 
-  async function onConfirm(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !email.trim()) {
-      setError("Fill in your name and email to confirm.");
-      return;
-    }
-    // In mock mode, also require card fields for design parity
-    if (!clientSecret && card.trim().length < 8) {
-      setError("Fill in your name, email, and card number to confirm.");
-      return;
-    }
+  // Create PaymentIntent as soon as the package is known — Stripe Element only
+  useEffect(() => {
+    if (!pkg || started.current) return;
+    started.current = true;
 
-    setError(null);
-    setBooking(true);
-
-    try {
-      const parts = name.trim().split(/\s+/);
-      const givenName = parts[0]!;
-      const familyName = parts.slice(1).join(" ") || givenName;
-
-      if (!orderId) {
-        const result = await startCheckout.mutateAsync({
-          searchId: params.searchId,
-          packageId: params.packageId,
-          email,
-          travelers: [{ givenName, familyName }],
-        });
+    void startCheckout
+      .mutateAsync({
+        searchId: params.searchId,
+        packageId: params.packageId,
+        travelerCount: travelers,
+      })
+      .then((result) => {
         setClientSecret(result.clientSecret);
         setOrderId(result.orderId);
         setMock(result.mock);
+        setBooting(false);
+      })
+      .catch((err) => {
+        setBooting(false);
+        setError(err instanceof Error ? err.message : "Checkout failed");
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pkg, params.searchId, params.packageId, travelers]);
 
-        if (result.mock) {
-          const order = await confirmCheckout.mutateAsync({
-            orderId: result.orderId,
-          });
-          router.push(`/confirmation/${order.id}`);
-          return;
-        }
-        setBooking(false);
-        return;
-      }
-
-      if (mock && orderId) {
-        const order = await confirmCheckout.mutateAsync({ orderId });
-        router.push(`/confirmation/${order.id}`);
-      }
-    } catch (err) {
-      setBooking(false);
-      setError(err instanceof Error ? err.message : "Checkout failed");
-    }
-  }
-
-  if (!pkg) {
+  if (!pkg || booting) {
     return (
       <div className="mx-auto max-w-[900px] px-8 py-20">
-        <p>Loading…</p>
+        <p className="text-[var(--color-ink-soft)]">Preparing secure checkout…</p>
       </div>
     );
   }
@@ -117,82 +84,38 @@ export default function CheckoutPage() {
           Lock it in.
         </h2>
 
-        {!clientSecret || mock ? (
-          <form onSubmit={onConfirm} className="flex flex-col gap-5">
-            <Field label="Full name">
-              <input
-                className="field-input text-[15px]"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Jamie Rivera"
-                required
-              />
-            </Field>
-            <Field label="Email">
-              <input
-                type="email"
-                className="field-input text-[15px]"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="jamie@email.com"
-                required
-              />
-            </Field>
-            <Field label="Card number">
-              <input
-                className="field-input font-mono text-[15px]"
-                value={card}
-                onChange={(e) => setCard(e.target.value)}
-                placeholder="4242 4242 4242 4242"
-              />
-            </Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Expiry">
-                <input
-                  className="field-input font-mono text-[15px]"
-                  value={expiry}
-                  onChange={(e) => setExpiry(e.target.value)}
-                  placeholder="MM/YY"
-                />
-              </Field>
-              <Field label="CVC">
-                <input
-                  className="field-input font-mono text-[15px]"
-                  value={cvc}
-                  onChange={(e) => setCvc(e.target.value)}
-                  placeholder="123"
-                />
-              </Field>
-            </div>
-            {error && (
-              <div className="text-sm font-semibold text-[var(--color-danger)]">
-                {error}
-              </div>
-            )}
-            <button type="submit" className="btn-primary mt-1" disabled={booking}>
-              {booking ? "Confirming…" : "Confirm & book"}
-            </button>
-            <p className="m-0 text-center text-xs text-[var(--color-ink-soft)]">
-              {mock || !process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-                ? "Sandbox mode — no real payment is processed."
-                : "Secure checkout powered by Stripe."}
-            </p>
-          </form>
+        {error && (
+          <div className="mb-4 text-sm font-semibold text-[var(--color-danger)]">
+            {error}
+          </div>
+        )}
+
+        {mock || !stripePromise || !clientSecret ? (
+          <MockCheckout
+            orderId={orderId}
+            onPaid={(id) => router.push(`/confirmation/${id}`)}
+            onError={setError}
+          />
         ) : (
-          clientSecret &&
-          stripePromise && (
-            <Elements stripe={stripePromise} options={{ clientSecret }}>
-              <StripePayForm
-                orderId={orderId!}
-                name={name}
-                email={email}
-                onName={setName}
-                onEmail={setEmail}
-                onPaid={(id) => router.push(`/confirmation/${id}`)}
-                onError={setError}
-              />
-            </Elements>
-          )
+          <Elements
+            stripe={stripePromise}
+            options={{
+              clientSecret,
+              appearance: {
+                theme: "stripe",
+                variables: {
+                  colorPrimary: "#c45c26",
+                  borderRadius: "12px",
+                },
+              },
+            }}
+          >
+            <StripePayForm
+              orderId={orderId!}
+              onPaid={(id) => router.push(`/confirmation/${id}`)}
+              onError={setError}
+            />
+          </Elements>
         )}
       </div>
 
@@ -221,35 +144,50 @@ export default function CheckoutPage() {
   );
 }
 
-function Field({
-  label,
-  children,
+function MockCheckout({
+  orderId,
+  onPaid,
+  onError,
 }: {
-  label: string;
-  children: React.ReactNode;
+  orderId: string | null;
+  onPaid: (orderId: string) => void;
+  onError: (msg: string) => void;
 }) {
+  const confirmCheckout = trpc.checkout.confirm.useMutation();
+  const [pending, setPending] = useState(false);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!orderId) return;
+    setPending(true);
+    try {
+      const order = await confirmCheckout.mutateAsync({ orderId });
+      onPaid(order.id);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Booking failed");
+      setPending(false);
+    }
+  }
+
   return (
-    <div>
-      <label className="field-label">{label}</label>
-      {children}
-    </div>
+    <form onSubmit={onSubmit} className="flex flex-col gap-5">
+      <p className="m-0 text-sm text-[var(--color-ink-soft)]">
+        Stripe isn’t configured — this confirms a mock booking with no card
+        charge.
+      </p>
+      <button type="submit" className="btn-primary" disabled={!orderId || pending}>
+        {pending ? "Confirming…" : "Confirm mock booking"}
+      </button>
+    </form>
   );
 }
 
 function StripePayForm({
   orderId,
-  name,
-  email,
-  onName,
-  onEmail,
   onPaid,
   onError,
 }: {
   orderId: string;
-  name: string;
-  email: string;
-  onName: (v: string) => void;
-  onEmail: (v: string) => void;
   onPaid: (orderId: string) => void;
   onError: (msg: string) => void;
 }) {
@@ -262,16 +200,25 @@ function StripePayForm({
     e.preventDefault();
     if (!stripe || !elements) return;
     setPending(true);
+    onError("");
+
     const { error: stripeError } = await stripe.confirmPayment({
       elements,
       redirect: "if_required",
+      confirmParams: {
+        // Payment Element collects name + email; return_url for redirect methods
+        return_url: `${window.location.origin}/confirmation/${orderId}`,
+      },
     });
+
     if (stripeError) {
       onError(stripeError.message ?? "Payment failed");
       setPending(false);
       return;
     }
+
     try {
+      // Server pulls email/name from the PaymentIntent, then books Duffel
       const order = await confirmCheckout.mutateAsync({ orderId });
       onPaid(order.id);
     } catch (err) {
@@ -282,24 +229,19 @@ function StripePayForm({
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-5">
-      <Field label="Full name">
-        <input
-          className="field-input text-[15px]"
-          value={name}
-          onChange={(e) => onName(e.target.value)}
-          required
-        />
-      </Field>
-      <Field label="Email">
-        <input
-          type="email"
-          className="field-input text-[15px]"
-          value={email}
-          onChange={(e) => onEmail(e.target.value)}
-          required
-        />
-      </Field>
-      <PaymentElement />
+      <PaymentElement
+        options={{
+          layout: "tabs",
+          fields: {
+            billingDetails: {
+              name: "auto",
+              email: "auto",
+              phone: "never",
+              address: "never",
+            },
+          },
+        }}
+      />
       <button
         type="submit"
         className="btn-primary"
@@ -307,6 +249,10 @@ function StripePayForm({
       >
         {pending ? "Confirming…" : "Confirm & book"}
       </button>
+      <p className="m-0 text-center text-xs text-[var(--color-ink-soft)]">
+        Secure checkout powered by Stripe. Name and email are collected with
+        your payment.
+      </p>
     </form>
   );
 }

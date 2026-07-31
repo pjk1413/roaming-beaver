@@ -5,7 +5,7 @@ export const SLOT_META: Record<
   { label: string; hue: string; badge: string }
 > = {
   BUDGET_GETAWAY: {
-    label: "Cheap Getaway",
+    label: "Budget Getaway",
     hue: "var(--color-hue-cheap)",
     badge: "$",
   },
