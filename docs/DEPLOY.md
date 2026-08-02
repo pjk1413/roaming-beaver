@@ -67,10 +67,10 @@ Use your **Supabase Postgres connection string** for `DATABASE_URL` in productio
 
 | Type | Name | Value |
 |------|------|--------|
-| Secret | `GCP_PROJECT_ID` | GCP project id |
 | Secret | `GCP_SA_KEY` | Full JSON key for the deploy service account |
 | Secret | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (also used as Docker build-arg) |
 | Secret | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key (optional) |
+| Variable | `GCP_PROJECT_ID` | GCP project id (e.g. `roaming-beaver`) |
 | Variable | `GCP_REGION` | `us-central1` |
 | Variable | `GCP_ARTIFACT_REPO` | `roaming-beaver` |
 | Variable | `NEXT_PUBLIC_SUPABASE_URL` | `https://xxxx.supabase.co` |

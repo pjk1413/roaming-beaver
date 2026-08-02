@@ -100,12 +100,12 @@ Create a service account key (once), then store it in GitHub:
 Repo → Settings → Secrets and variables → Actions
 
 Secrets:
-  GCP_PROJECT_ID                  = ${PROJECT_ID}
   GCP_SA_KEY                      = (full JSON from the key file above)
   NEXT_PUBLIC_SUPABASE_ANON_KEY   = (from Supabase)
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = (from Stripe, optional)
 
 Variables:
+  GCP_PROJECT_ID                  = ${PROJECT_ID}
   GCP_REGION                      = ${REGION}
   GCP_ARTIFACT_REPO               = ${REPO_NAME}
   NEXT_PUBLIC_SUPABASE_URL        = https://xxxx.supabase.co
