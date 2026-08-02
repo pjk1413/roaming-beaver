@@ -5,7 +5,7 @@
 #   ./scripts/gcp-setup.sh YOUR_GCP_PROJECT_ID [REGION] [GITHUB_ORG_OR_USER/REPO]
 #
 # Example:
-#   ./scripts/gcp-setup.sh mystery-trips-prod us-central1 myuser/travel_app
+#   ./scripts/gcp-setup.sh roaming-beaver-prod us-central1 pjk1413/travel_app
 #
 # Prerequisites: gcloud CLI authenticated with Owner/Editor on the project.
 set -euo pipefail
@@ -13,12 +13,10 @@ set -euo pipefail
 PROJECT_ID="${1:?Usage: $0 PROJECT_ID [REGION] [GITHUB_REPO]}"
 REGION="${2:-us-central1}"
 GITHUB_REPO="${3:-}"
-SERVICE="mystery-trips-web"
-REPO_NAME="mystery-trips"
+SERVICE="roaming-beaver-web"
+REPO_NAME="roaming-beaver"
 SA_NAME="github-deploy"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-POOL_NAME="github-pool"
-PROVIDER_NAME="github-provider"
 
 echo "==> Enabling APIs on ${PROJECT_ID}…"
 gcloud config set project "${PROJECT_ID}"
@@ -27,16 +25,14 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
   iam.googleapis.com \
-  iamcredentials.googleapis.com \
-  cloudresourcemanager.googleapis.com \
-  sts.googleapis.com
+  cloudresourcemanager.googleapis.com
 
 echo "==> Artifact Registry repo (${REPO_NAME})…"
 if ! gcloud artifacts repositories describe "${REPO_NAME}" --location="${REGION}" &>/dev/null; then
   gcloud artifacts repositories create "${REPO_NAME}" \
     --repository-format=docker \
     --location="${REGION}" \
-    --description="Mystery Trips / Roaming Beaver images"
+    --description="Roaming Beaver images"
 fi
 
 echo "==> Deployer service account…"
@@ -57,42 +53,6 @@ do
     --condition=None \
     --quiet >/dev/null
 done
-
-echo "==> Workload Identity Federation pool…"
-if ! gcloud iam workload-identity-pools describe "${POOL_NAME}" --location=global &>/dev/null; then
-  gcloud iam workload-identity-pools create "${POOL_NAME}" \
-    --location=global \
-    --display-name="GitHub Actions"
-fi
-
-POOL_ID="$(gcloud iam workload-identity-pools describe "${POOL_NAME}" \
-  --location=global --format='value(name)')"
-
-if ! gcloud iam workload-identity-pools providers describe "${PROVIDER_NAME}" \
-  --location=global --workload-identity-pool="${POOL_NAME}" &>/dev/null; then
-  if [[ -z "${GITHUB_REPO}" ]]; then
-    echo "ERROR: first-time provider create needs GITHUB_REPO (org/repo)." >&2
-    echo "Re-run: $0 ${PROJECT_ID} ${REGION} your-org/travel_app" >&2
-    exit 1
-  fi
-  gcloud iam workload-identity-pools providers create-oidc "${PROVIDER_NAME}" \
-    --location=global \
-    --workload-identity-pool="${POOL_NAME}" \
-    --display-name="GitHub" \
-    --issuer-uri="https://token.actions.githubusercontent.com" \
-    --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-    --attribute-condition="assertion.repository=='${GITHUB_REPO}'"
-fi
-
-PROVIDER_ID="$(gcloud iam workload-identity-pools providers describe "${PROVIDER_NAME}" \
-  --location=global --workload-identity-pool="${POOL_NAME}" --format='value(name)')"
-
-if [[ -n "${GITHUB_REPO}" ]]; then
-  gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
-    --role="roles/iam.workloadIdentityUser" \
-    --member="principalSet://iam.googleapis.com/${POOL_ID}/attribute.repository/${GITHUB_REPO}" \
-    --quiet >/dev/null
-fi
 
 echo "==> Creating Secret Manager secrets (empty placeholders — set values next)…"
 SECRETS=(
@@ -126,17 +86,22 @@ for S in "${SECRETS[@]}"; do
     --quiet >/dev/null || true
 done
 
+KEY_HINT="gcloud iam service-accounts keys create ./gcp-sa-key.json --iam-account=${SA_EMAIL}"
+
 cat <<EOF
 
 ============================================================
 GCP setup complete. Configure GitHub next.
 
+Create a service account key (once), then store it in GitHub:
+  ${KEY_HINT}
+  # paste the JSON into GitHub secret GCP_SA_KEY, then delete the local file
+
 Repo → Settings → Secrets and variables → Actions
 
 Secrets:
   GCP_PROJECT_ID                  = ${PROJECT_ID}
-  GCP_SERVICE_ACCOUNT             = ${SA_EMAIL}
-  GCP_WORKLOAD_IDENTITY_PROVIDER  = ${PROVIDER_ID}
+  GCP_SA_KEY                      = (full JSON from the key file above)
   NEXT_PUBLIC_SUPABASE_ANON_KEY   = (from Supabase)
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = (from Stripe, optional)
 

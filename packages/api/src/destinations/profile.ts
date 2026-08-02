@@ -582,21 +582,13 @@ export async function profileDestination(
       dest.city,
       dest.country,
     );
-    // Drop duplicate city-center collapses when we already have a better point
     const tooCloseToExisting = geocoded.some(
       (g) => metersBetween(g, coords) < 250,
     );
-    if (coords.fallback && tooCloseToExisting) {
+    if (tooCloseToExisting) {
       console.warn(
-        `[profile] Skipping near-duplicate fallback for "${area.areaName}" (${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)})`,
-      );
-      // Still keep the area but nudge slightly so hotel search isn't identical —
-      // prefer keeping with a warning; matching needs a center. Use city offset
-      // only as last resort so admin can see it was weak.
-    }
-    if (tooCloseToExisting && !coords.fallback) {
-      console.warn(
-        `[profile] "${area.areaName}" geocoded very near another stay area — keeping both`,
+        `[profile] "${area.areaName}" is within 250m of another stay area` +
+          (coords.fallback ? " (city-center fallback)" : ""),
       );
     }
     geocoded.push({

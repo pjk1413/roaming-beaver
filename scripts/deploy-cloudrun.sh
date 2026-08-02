@@ -7,8 +7,8 @@ set -euo pipefail
 
 PROJECT_ID="${1:?project id required}"
 REGION="${2:-us-central1}"
-SERVICE="mystery-trips-web"
-REPO="mystery-trips"
+SERVICE="roaming-beaver-web"
+REPO="roaming-beaver"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}"
 
 gcloud config set project "${PROJECT_ID}"

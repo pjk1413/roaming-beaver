@@ -22,11 +22,20 @@ From the repo root:
 
 ```bash
 chmod +x scripts/gcp-setup.sh
-./scripts/gcp-setup.sh YOUR_GCP_PROJECT_ID us-central1 your-org/travel_app
+./scripts/gcp-setup.sh YOUR_GCP_PROJECT_ID us-central1
 ```
 
-That enables APIs, creates Artifact Registry, a deployer service account,
-Workload Identity Federation (keyless GitHub → GCP), and Secret Manager placeholders.
+That enables APIs, creates Artifact Registry, a deployer service account
+(`github-deploy@…`), and Secret Manager placeholders.
+
+Then create a JSON key and store it in GitHub:
+
+```bash
+gcloud iam service-accounts keys create ./gcp-sa-key.json \
+  --iam-account=github-deploy@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com
+# Paste the file contents into GitHub secret GCP_SA_KEY, then delete the local file
+rm ./gcp-sa-key.json
+```
 
 ### 3. Put real values in Secret Manager
 
@@ -59,12 +68,11 @@ Use your **Supabase Postgres connection string** for `DATABASE_URL` in productio
 | Type | Name | Value |
 |------|------|--------|
 | Secret | `GCP_PROJECT_ID` | GCP project id |
-| Secret | `GCP_SERVICE_ACCOUNT` | `github-deploy@PROJECT.iam.gserviceaccount.com` |
-| Secret | `GCP_WORKLOAD_IDENTITY_PROVIDER` | printed by setup script (`projects/…/providers/github-provider`) |
+| Secret | `GCP_SA_KEY` | Full JSON key for the deploy service account |
 | Secret | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key (also used as Docker build-arg) |
 | Secret | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Stripe publishable key (optional) |
 | Variable | `GCP_REGION` | `us-central1` |
-| Variable | `GCP_ARTIFACT_REPO` | `mystery-trips` |
+| Variable | `GCP_ARTIFACT_REPO` | `roaming-beaver` |
 | Variable | `NEXT_PUBLIC_SUPABASE_URL` | `https://xxxx.supabase.co` |
 | Variable | `NEXT_PUBLIC_APP_URL` | set after first deploy (see below) |
 | Variable | `ASSEMBLY_FEE_RATE` | `0.08` |
@@ -76,7 +84,7 @@ In GitHub: **Actions → Deploy to Cloud Run → Run workflow**.
 
 After it succeeds, copy the Cloud Run URL from the job summary, then:
 
-1. Set GitHub variable `NEXT_PUBLIC_APP_URL` to that URL (e.g. `https://mystery-trips-web-xxxxx-uc.a.run.app`)
+1. Set GitHub variable `NEXT_PUBLIC_APP_URL` to that URL (e.g. `https://roaming-beaver-web-xxxxx-uc.a.run.app`)
 2. In Supabase Auth → URL Configuration, add  
    `https://YOUR_CLOUD_RUN_URL/auth/callback`
 3. Re-run the workflow so the Next.js build embeds the correct public URL
@@ -107,11 +115,13 @@ Manual deploy without GitHub:
 
 ---
 
-## How auth works (no JSON keys)
+## How auth works
 
-GitHub Actions uses **Workload Identity Federation**: the workflow requests an OIDC
-token; GCP trusts GitHub for your repo only and mints short-lived credentials for
-`github-deploy@…`. No long-lived service-account key in GitHub secrets.
+GitHub Actions authenticates with a **service account JSON key** stored as the
+`GCP_SA_KEY` repository secret. Create a key for your deploy SA in GCP
+(IAM → Service accounts → Keys), paste the full JSON into that secret, and keep
+it rotated. Prefer restricting the SA to Artifact Registry + Cloud Run deploy
+roles only.
 
 ---
 
