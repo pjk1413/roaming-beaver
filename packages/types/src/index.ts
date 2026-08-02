@@ -41,9 +41,9 @@ export const FlightSchema = z.object({
 });
 export type Flight = z.infer<typeof FlightSchema>;
 
-export const HotelSchema = z.object({
-  duffelRateId: z.string(),
-  duffelSearchResultId: z.string().optional(),
+const HotelFieldsSchema = z.object({
+  hotelRateId: z.string(),
+  hotelSearchResultId: z.string().optional(),
   name: z.string(),
   starRating: z.number().min(1).max(5),
   address: z.string(),
@@ -55,18 +55,23 @@ export const HotelSchema = z.object({
   totalCents: z.number().int().nonnegative(),
   distanceToBeachMeters: z.number().nonnegative().optional(),
 });
-export type Hotel = z.infer<typeof HotelSchema>;
 
-export const RentalCarSchema = z.object({
-  duffelQuoteId: z.string(),
-  vendor: z.string(),
-  vehicleName: z.string(),
-  pickupLocation: z.string(),
-  dropoffLocation: z.string(),
-  currency: z.string().default("USD"),
-  totalCents: z.number().int().nonnegative(),
-});
-export type RentalCar = z.infer<typeof RentalCarSchema>;
+/** Accepts legacy Duffel field names when reading stored JSON snapshots. */
+export const HotelSchema = z.preprocess((raw) => {
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.hotelRateId !== "string" && typeof o.duffelRateId === "string") {
+      return {
+        ...o,
+        hotelRateId: o.duffelRateId,
+        hotelSearchResultId:
+          o.hotelSearchResultId ?? o.duffelSearchResultId,
+      };
+    }
+  }
+  return raw;
+}, HotelFieldsSchema);
+export type Hotel = z.infer<typeof HotelFieldsSchema>;
 
 export const ItineraryItemSchema = z.object({
   day: z.number().int().min(1),
@@ -79,7 +84,7 @@ export type ItineraryItem = z.infer<typeof ItineraryItemSchema>;
 export const DestinationPackageSchema = z.object({
   id: z.string(),
   slot: DestinationSlotSchema,
-  /** 0 = first result; 1–2 = fetched on “try again” */
+  /** 0 = first (and only) result per slot */
   rank: z.number().int().min(0).max(2).default(0),
   city: z.string(),
   country: z.string(),
@@ -87,19 +92,35 @@ export const DestinationPackageSchema = z.object({
   destinationId: z.string(),
   flight: FlightSchema,
   hotel: HotelSchema,
-  rentalCar: RentalCarSchema.nullable(),
   itinerary: z.array(ItineraryItemSchema),
   subtotalCents: z.number().int().nonnegative(),
   assemblyFeeCents: z.number().int().nonnegative(),
   totalCents: z.number().int().nonnegative(),
   currency: z.string().default("USD"),
+  /** Loaded live from DestinationImage (not match-cache). */
+  images: z
+    .array(
+      z.object({
+        url: z.string(),
+        thumbUrl: z.string().nullable().optional(),
+        attribution: z.string().nullable().optional(),
+        source: z.string().optional(),
+        sourcePageUrl: z.string().nullable().optional(),
+        kind: z.enum(["hero", "gallery"]).or(z.string()),
+        caption: z.string().nullable().optional(),
+        sortOrder: z.number().int().optional(),
+      }),
+    )
+    .default([]),
 });
 export type DestinationPackage = z.infer<typeof DestinationPackageSchema>;
 
-/** One package per slot initially; reshuffles fetch the next city on demand */
+export type DestinationImageDto = DestinationPackage["images"][number];
+
+/** Exactly one package per slot (Budget / Beach / Exotic). */
 export const TripSearchResultSchema = z.object({
   searchId: z.string(),
-  packages: z.array(DestinationPackageSchema).min(1).max(9),
+  packages: z.array(DestinationPackageSchema).min(1).max(3),
 });
 export type TripSearchResult = z.infer<typeof TripSearchResultSchema>;
 
@@ -132,8 +153,7 @@ export const OrderSchema = z.object({
   currency: z.string(),
   stripePaymentIntentId: z.string().nullable().optional(),
   duffelFlightOrderId: z.string().nullable().optional(),
-  duffelStayBookingId: z.string().nullable().optional(),
-  duffelCarBookingId: z.string().nullable().optional(),
+  hotelBookingId: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 export type Order = z.infer<typeof OrderSchema>;

@@ -17,29 +17,38 @@ import {
   createSearchRecord,
   getSearchStatus,
   runSearchSlots,
-  reshuffleSearchSlots,
   requestFromSearch,
   ensurePackageItinerary,
-  MAX_RESHUFFLES,
 } from "./search/stream";
 
-function mapPackageRow(row: {
-  id: string;
-  slot: string;
-  rank: number;
-  city: string;
-  country: string;
-  airportCode: string;
-  destinationId: string;
-  flightJson: unknown;
-  hotelJson: unknown;
-  rentalCarJson: unknown;
-  itineraryJson: unknown;
-  subtotalCents: number;
-  assemblyFeeCents: number;
-  totalCents: number;
-  currency: string;
-}) {
+function mapPackageRow(
+  row: {
+    id: string;
+    slot: string;
+    rank: number;
+    city: string;
+    country: string;
+    airportCode: string;
+    destinationId: string;
+    flightJson: unknown;
+    hotelJson: unknown;
+    itineraryJson: unknown;
+    subtotalCents: number;
+    assemblyFeeCents: number;
+    totalCents: number;
+    currency: string;
+  },
+  images: Array<{
+    url: string;
+    thumbUrl: string | null;
+    attribution: string | null;
+    source: string;
+    sourcePageUrl: string | null;
+    kind: string;
+    caption: string | null;
+    sortOrder: number;
+  }> = [],
+) {
   return DestinationPackageSchema.parse({
     id: row.id,
     slot: row.slot,
@@ -50,13 +59,55 @@ function mapPackageRow(row: {
     destinationId: row.destinationId,
     flight: row.flightJson,
     hotel: row.hotelJson,
-    rentalCar: row.rentalCarJson,
     itinerary: row.itineraryJson,
     subtotalCents: row.subtotalCents,
     assemblyFeeCents: row.assemblyFeeCents,
     totalCents: row.totalCents,
     currency: row.currency,
+    images,
   });
+}
+
+async function imagesByDestinationIds(ids: string[]) {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) {
+    return new Map<string, ReturnType<typeof mapImage>[]>();
+  }
+
+  const rows = await prisma.destinationImage.findMany({
+    where: { destinationId: { in: unique } },
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+
+  const map = new Map<string, ReturnType<typeof mapImage>[]>();
+  for (const row of rows) {
+    const list = map.get(row.destinationId) ?? [];
+    list.push(mapImage(row));
+    map.set(row.destinationId, list);
+  }
+  return map;
+}
+
+function mapImage(row: {
+  url: string;
+  thumbUrl: string | null;
+  attribution: string | null;
+  source: string;
+  sourcePageUrl: string | null;
+  kind: string;
+  caption: string | null;
+  sortOrder: number;
+}) {
+  return {
+    url: row.url,
+    thumbUrl: row.thumbUrl,
+    attribution: row.attribution,
+    source: row.source,
+    sourcePageUrl: row.sourcePageUrl,
+    kind: row.kind,
+    caption: row.caption,
+    sortOrder: row.sortOrder,
+  };
 }
 
 export const appRouter = router({
@@ -103,11 +154,17 @@ export const appRouter = router({
         });
         if (!search) return null;
 
+        const imageMap = await imagesByDestinationIds(
+          search.packages.map((p) => p.destinationId),
+        );
+
         return {
           searchId: search.id,
           status: search.status,
           slotErrors: (search.slotErrors ?? {}) as Record<string, string>,
-          packages: search.packages.map(mapPackageRow),
+          packages: search.packages.map((p) =>
+            mapPackageRow(p, imageMap.get(p.destinationId) ?? []),
+          ),
         };
       }),
 
@@ -135,23 +192,6 @@ export const appRouter = router({
           }
         }
         return getSearchStatus(search.id);
-      }),
-
-    /**
-     * Fetch next-cheapest city per slot (excludes already-shown destinations).
-     * Call after initial search completes — up to MAX_RESHUFFLES times.
-     */
-    reshuffle: publicProcedure
-      .input(z.object({ searchId: z.string() }))
-      .mutation(async ({ input }) => {
-        const result = await reshuffleSearchSlots(input.searchId, async () => {});
-        const status = await getSearchStatus(input.searchId);
-        return {
-          ...status,
-          packages: result.packages,
-          reshufflesUsed: result.reshufflesUsed,
-          maxReshuffles: MAX_RESHUFFLES,
-        };
       }),
 
     /** Generate itinerary on demand for trip detail (kept off the hot search path). */

@@ -4,7 +4,7 @@ Surprise trip packages: budget getaway, beach escape, exotic adventure — one a
 
 ## Stack
 
-pnpm + Turborepo · Next.js 15 · tRPC · Prisma · **Supabase Auth** · Stripe · Duffel · Resend · OpenAI · Cloud Run
+pnpm + Turborepo · Next.js 15 · tRPC · Prisma · **Supabase Auth** · Stripe · Duffel (flights) · LiteAPI (hotels) · Resend · OpenAI · Cloud Run
 
 **Database**: local Postgres in development; Supabase Postgres in production (`DATABASE_URL`).
 
@@ -61,10 +61,12 @@ docs/               Product + architecture
 
 ## Checkout sequencing
 
-1. Revalidate Duffel offers  
-2. Charge via Stripe (full total incl. assembly fee)  
-3. Book via Duffel Balance  
-4. On booking failure → Stripe refund + order `FAILED`/`REFUNDED`  
+1. Revalidate flight (Duffel) + hotel (LiteAPI)  
+2. Charge via Stripe (one customer charge — full total incl. assembly fee)  
+3. Book hotel (LiteAPI) then flight (Duffel Balance)  
+4. On booking failure → cancel hotel if needed, Stripe refund, order `FAILED`/`REFUNDED`  
 5. On success → confirmation email + account history  
 
 Assembly fee: `ASSEMBLY_FEE_RATE` (clamped 5–10%, default 8%).
+
+**Funding (ops, not code):** Duffel Balance must be pre-funded. LiteAPI production needs its own payment method on file — confirm settlement in their docs before going live.

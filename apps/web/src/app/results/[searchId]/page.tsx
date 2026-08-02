@@ -14,8 +14,6 @@ const SLOTS: DestinationSlot[] = [
   "EXOTIC_ADVENTURE",
 ];
 
-const MAX_RESHUFFLES = 2;
-
 type SlotState =
   | { status: "loading" }
   | { status: "ready"; pkg: DestinationPackage }
@@ -24,21 +22,20 @@ type SlotState =
 function isMockPackage(pkg: DestinationPackage): boolean {
   return (
     pkg.flight.duffelOfferId.startsWith("off_mock_") ||
-    pkg.hotel.duffelRateId.startsWith("rate_mock_")
+    pkg.hotel.hotelRateId.startsWith("rate_mock_")
   );
 }
 
 function isLiveFlightsMockHotels(pkg: DestinationPackage): boolean {
   return (
     !pkg.flight.duffelOfferId.startsWith("off_mock_") &&
-    pkg.hotel.duffelRateId.startsWith("rate_mock_")
+    pkg.hotel.hotelRateId.startsWith("rate_mock_")
   );
 }
 
 export default function ResultsPage() {
   const params = useParams<{ searchId: string }>();
   const runSearch = trpc.search.run.useMutation();
-  const reshuffle = trpc.search.reshuffle.useMutation();
   const utils = trpc.useUtils();
 
   const [slots, setSlots] = useState<Record<DestinationSlot, SlotState>>({
@@ -48,7 +45,6 @@ export default function ResultsPage() {
   });
   const [done, setDone] = useState(false);
   const [opened, setOpened] = useState<Record<string, boolean>>({});
-  const [reshufflesUsed, setReshufflesUsed] = useState(0);
   const [origin, setOrigin] = useState("HOME");
   const [travelers, setTravelers] = useState(2);
   const [fatal, setFatal] = useState<string | null>(null);
@@ -134,29 +130,6 @@ export default function ResultsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one poller per searchId
   }, [params.searchId]);
 
-  const canReshuffle =
-    done && reshufflesUsed < MAX_RESHUFFLES && !reshuffle.isPending;
-
-  async function onReshuffle() {
-    if (!canReshuffle) return;
-    setOpened({});
-    try {
-      const result = await reshuffle.mutateAsync({
-        searchId: params.searchId,
-      });
-      setReshufflesUsed(result.reshufflesUsed);
-      for (const pkg of result.packages) {
-        applyPackageRef.current(pkg);
-      }
-      setDone(true);
-    } catch (err) {
-      setDone(true);
-      setFatal(
-        err instanceof Error ? err.message : "Could not find more trips.",
-      );
-    }
-  }
-
   if (fatal) {
     return (
       <div className="mx-auto max-w-lg px-8 py-20 text-center">
@@ -180,16 +153,17 @@ export default function ResultsPage() {
           <span className="mt-1 block">
             {partialMock ? (
               <>
-                Hotels (and cars, if needed) are simulated — Duffel Stays isn’t
-                enabled on this API key. Flights are live. Contact Duffel sales
-                to enable Stays for real hotel rates.
+                Hotels are simulated — no{" "}
+                <code className="font-mono text-[12px]">LITEAPI_API_KEY</code>{" "}
+                is set. Flights are live. Add a LiteAPI sandbox or production key
+                for real hotel rates.
               </>
             ) : (
               <>
-                No real Duffel key — prices and flights are simulated. Set{" "}
-                <code className="font-mono text-[12px]">DUFFEL_API_KEY</code> in{" "}
-                <code className="font-mono text-[12px]">apps/web/.env</code> for
-                live offers.
+                No real travel keys — prices and flights are simulated. Set{" "}
+                <code className="font-mono text-[12px]">DUFFEL_API_KEY</code> and{" "}
+                <code className="font-mono text-[12px]">LITEAPI_API_KEY</code>{" "}
+                for live offers.
               </>
             )}
           </span>
@@ -200,9 +174,7 @@ export default function ResultsPage() {
       </div>
       <h2 className="mb-3 font-display text-[34px] font-bold tracking-[-0.02em]">
         {done && readyCount === 3
-          ? reshufflesUsed > 0
-            ? "Three more options, ready to open."
-            : "Three trips, matched and ready."
+          ? "Three trips, matched and ready."
           : "Matching your trips…"}
       </h2>
       <p className="mb-12 text-base text-[var(--color-ink-soft)]">
@@ -237,25 +209,6 @@ export default function ResultsPage() {
             />
           );
         })}
-      </div>
-
-      <div className="mt-9">
-        {canReshuffle ? (
-          <button
-            type="button"
-            onClick={onReshuffle}
-            disabled={reshuffle.isPending}
-            className="btn-secondary"
-          >
-            {reshuffle.isPending
-              ? "Finding 3 more…"
-              : `Not feeling these? Show 3 more (${MAX_RESHUFFLES - reshufflesUsed} left)`}
-          </button>
-        ) : done && reshufflesUsed >= MAX_RESHUFFLES ? (
-          <p className="text-[13px] text-[var(--color-ink-soft)]">
-            That’s all the options for these dates — pick your favorite above.
-          </p>
-        ) : null}
       </div>
     </div>
   );

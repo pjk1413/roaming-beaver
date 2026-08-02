@@ -19,7 +19,7 @@ type Props = {
 export function AirportAutocomplete({
   value,
   onChange,
-  placeholder = "City or code — e.g. JFK, Chicago",
+  placeholder = "City or code — e.g. AUS, Chicago",
   required,
 }: Props) {
   const listId = useId();
@@ -221,7 +221,7 @@ export function AirportAutocomplete({
 
       {showEmpty && (
         <div className="absolute z-20 mt-1.5 w-full rounded-xl border border-[var(--color-line-strong)] bg-white px-3.5 py-3 text-left text-sm text-[var(--color-ink-soft)] shadow-[0_12px_32px_oklch(22%_0.02_50_/_0.12)]">
-          No airports match “{query.trim()}”. Try a city or IATA code.
+          No match for “{query.trim()}”. Origins are limited to approved cities.
         </div>
       )}
     </div>

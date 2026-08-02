@@ -40,3 +40,23 @@ export function formatDateRange(depart?: string, ret?: string) {
   if (!ret) return depart;
   return `${depart} – ${ret}`;
 }
+
+/** Format an ISO datetime for trip detail (e.g. "Aug 12 · 8:30 AM"). */
+export function formatFlightTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(d);
+}
+
+export function formatDurationMinutes(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h <= 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}

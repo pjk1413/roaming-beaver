@@ -64,16 +64,13 @@ export default function ConfirmationPage() {
           <strong>{order.email}</strong> within a few minutes. Nothing else to
           plan.
         </div>
-        {(order.duffelFlightOrderId || order.duffelStayBookingId) && (
+        {(order.duffelFlightOrderId || order.hotelBookingId) && (
           <dl className="mt-5 space-y-1 font-mono text-xs text-[var(--color-ink-soft)]">
             {order.duffelFlightOrderId && (
               <div>Flight: {order.duffelFlightOrderId}</div>
             )}
-            {order.duffelStayBookingId && (
-              <div>Hotel: {order.duffelStayBookingId}</div>
-            )}
-            {order.duffelCarBookingId && (
-              <div>Car: {order.duffelCarBookingId}</div>
+            {order.hotelBookingId && (
+              <div>Hotel: {order.hotelBookingId}</div>
             )}
           </dl>
         )}

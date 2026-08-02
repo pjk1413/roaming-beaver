@@ -1,4 +1,4 @@
-import type { Flight, Hotel, RentalCar } from "@mystery-trips/types";
+import type { Flight, Hotel } from "@mystery-trips/types";
 
 export type FlightSearchParams = {
   origin: string;
@@ -6,6 +6,8 @@ export type FlightSearchParams = {
   departDate: string;
   returnDate: string;
   passengers: number;
+  /** 0 = direct only; omit for Duffel's default (up to 1 connection). */
+  maxConnections?: number;
 };
 
 export type StaySearchParams = {
@@ -17,12 +19,6 @@ export type StaySearchParams = {
   guests: number;
   minStars?: number;
   maxStars?: number;
-};
-
-export type CarSearchParams = {
-  airportCode: string;
-  pickUpDate: string;
-  dropOffDate: string;
 };
 
 export type CreateFlightOrderParams = {
@@ -41,19 +37,16 @@ export type CreateStayBookingParams = {
   email: string;
 };
 
-export type CreateCarBookingParams = {
-  quoteId: string;
-  drivers: Array<{ givenName: string; familyName: string }>;
-  email: string;
-};
-
-export interface TravelSupplier {
+export interface FlightSupplier {
   searchFlights(params: FlightSearchParams): Promise<Flight[]>;
-  searchStays(params: StaySearchParams): Promise<Hotel[]>;
-  searchCars(params: CarSearchParams): Promise<RentalCar[]>;
   revalidateFlightOffer(offerId: string): Promise<Flight | null>;
-  revalidateStayRate(rateId: string): Promise<Hotel | null>;
   createFlightOrder(params: CreateFlightOrderParams): Promise<{ id: string }>;
+}
+
+export interface HotelSupplier {
+  searchStays(params: StaySearchParams): Promise<Hotel[]>;
+  revalidateStayRate(rateId: string): Promise<Hotel | null>;
   createStayBooking(params: CreateStayBookingParams): Promise<{ id: string }>;
-  createCarBooking(params: CreateCarBookingParams): Promise<{ id: string }>;
+  /** Best-effort cancel for checkout rollback. Throws on hard failure. */
+  cancelStayBooking(bookingId: string): Promise<void>;
 }

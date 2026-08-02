@@ -20,22 +20,147 @@ model User {
   tripSearches  TripSearch[]
 }
 
+enum ProfileStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
 model Destination {
-  id                   String   @id @default(cuid())
+  id                   String        @id @default(cuid())
   city                 String
   country              String
   airportCode          String
-  isBeach              Boolean  @default(false)
-  isExoticShortlist    Boolean  @default(false)
-  hasGoodPublicTransit Boolean  @default(true)
+  isBeach              Boolean       @default(false)
+  isExoticShortlist    Boolean       @default(false)
+  hasGoodPublicTransit Boolean       @default(true)
+  /// Multi-select vibe tags from research (BEACH, URBAN, EXOTIC, …).
+  /// Matching reads these; isBeach / isExoticShortlist are legacy mirrors.
+  vibeTags             String[]      @default([])
+  /// Airport coordinates (from OurAirports) — used for min-distance filtering.
+  airportLat           Float?
+  airportLng           Float?
   avgTempByMonthC      Json?
-  beachLat             Float?
-  beachLng             Float?
   notes                String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  /// Seed rank among North American metros — reference only, not a live constraint.
+  metroRank            Int?
+  profileStatus        ProfileStatus @default(DRAFT)
+  profiledAt           DateTime?
+  reviewedAt           DateTime?
+  reviewedBy           String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  packages DestinationPackage[]
+  stayAreas       StayArea[]
+  images          DestinationImage[]
+  packages        DestinationPackage[]
+  slotMatchCaches SlotMatchCache[]
+
+  @@index([profileStatus])
+  @@index([airportCode])
+}
+
+/// Destination photo gallery (hero + highlights) filled on profile/refresh.
+model DestinationImage {
+  id            String      @id @default(cuid())
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  url           String
+  thumbUrl      String?
+  attribution   String?
+  source        String
+  sourcePageUrl String?
+  kind          String
+  caption       String?
+  sortOrder     Int         @default(0)
+  createdAt     DateTime    @default(now())
+
+  @@index([destinationId, kind, sortOrder])
+}
+
+/// Tourist stay neighborhood — drives hotel search center + nearby activities.
+model StayArea {
+  id            String      @id @default(cuid())
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+
+  name      String
+  lat       Float
+  lng       Float
+  blurb     String
+  isPrimary Boolean @default(true)
+
+  activities DestinationActivity[]
+
+  @@index([destinationId, isPrimary])
+}
+
+model DestinationActivity {
+  id         String   @id @default(cuid())
+  stayAreaId String
+  stayArea   StayArea @relation(fields: [stayAreaId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String
+  category    String?
+  lat         Float?
+  lng         Float?
+
+  @@index([stayAreaId])
+}
+
+/// Candidates that passed discovery gates but exceeded this month's review cap.
+model DiscoveryWaitlist {
+  id               String   @id @default(cuid())
+  city             String
+  country          String
+  airportCode      String?
+  sourceNote       String?
+  sourceUrl        String?
+  attractionCount  Int?
+  accessPassRate   Float?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([city, country])
+  @@index([airportCode])
+}
+
+/// Internal cache-aside for matching: which city wins (~24h) + price freshness (~1h).
+model SlotMatchCache {
+  id            String   @id @default(cuid())
+
+  homeAirport   String
+  departDate    DateTime @db.Date
+  returnDate    DateTime @db.Date
+  travelers     Int
+  slot          String
+
+  destinationId String
+  destination   Destination @relation(fields: [destinationId], references: [id])
+  city          String
+  country       String
+  airportCode   String
+
+  flightOfferId String
+  hotelRateId   String
+
+  flightJson    Json
+  hotelJson     Json
+  /// Legacy column — unused after rental cars were removed.
+  rentalCarJson Json?
+  subtotalCents Int
+
+  winnerExpiresAt DateTime
+  priceExpiresAt  DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([homeAirport, departDate, returnDate, travelers, slot])
+  @@index([winnerExpiresAt])
 }
 
 model TripSearch {
@@ -64,13 +189,14 @@ model DestinationPackage {
   destinationId    String
   destination      Destination @relation(fields: [destinationId], references: [id])
   slot             String
-  /// 0 = cheapest shown first; 1–2 = prefetched “show more” alternates (distinct cities)
+  /// 0 = cheapest shown first (one package per slot)
   rank             Int      @default(0)
   city             String
   country          String
   airportCode      String
   flightJson       Json
   hotelJson        Json
+  /// Legacy column — unused after rental cars were removed.
   rentalCarJson    Json?
   itineraryJson    Json
   subtotalCents    Int
@@ -100,8 +226,7 @@ model Order {
   currency              String   @default("USD")
   stripePaymentIntentId String?
   duffelFlightOrderId   String?
-  duffelStayBookingId   String?
-  duffelCarBookingId    String?
+  hotelBookingId        String?
   failureReason         String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt

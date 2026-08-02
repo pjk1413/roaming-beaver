@@ -9,7 +9,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test 'src/**/*.test.ts'",
+    "profile": "node --env-file=../../.env --import tsx src/destinations/profile-cli.ts",
+    "discover": "node --env-file=../../.env --import tsx src/destinations/discover/discover-cli.ts",
+    "refresh-profiles": "node --env-file=../../.env --import tsx src/destinations/discover/refresh-cli.ts"
   },
   "dependencies": {
     "@mystery-trips/db": "workspace:*",
@@ -25,6 +29,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.32",
+    "tsx": "^4.20.3",
     "typescript": "^5.8.3"
   }
 }

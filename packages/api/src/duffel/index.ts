@@ -1,61 +1,60 @@
 import { DuffelClient } from "./client";
-import { HybridTravelSupplier } from "./hybrid";
 import { MockTravelSupplier } from "./mock";
-import type { TravelSupplier } from "./types";
+import type { FlightSupplier } from "../travel/types";
 
 const globalForSupplier = globalThis as unknown as {
-  travelSupplier: TravelSupplier | undefined;
+  flightSupplier: FlightSupplier | undefined;
 };
 
 function isMockKey(key: string | undefined): boolean {
   return !key || key === "test" || key.startsWith("mock");
 }
 
-/** Lazy-initialized Duffel (or mock) client — safe under Cloud Run scale-to-zero. */
-export function createTravelSupplier(): TravelSupplier {
+/** Lazy-initialized Duffel (or mock) flight client — safe under Cloud Run scale-to-zero. */
+export function createFlightSupplier(): FlightSupplier {
   const key = process.env.DUFFEL_API_KEY?.trim();
-  const existing = globalForSupplier.travelSupplier;
+  const existing = globalForSupplier.flightSupplier;
 
   if (existing) {
     const expectMock = isMockKey(key);
     const ok =
       (expectMock && existing instanceof MockTravelSupplier) ||
-      (!expectMock && existing instanceof HybridTravelSupplier);
+      (!expectMock && existing instanceof DuffelClient);
     if (ok) return existing;
   }
 
-  let supplier: TravelSupplier;
+  let supplier: FlightSupplier;
 
   if (isMockKey(key)) {
     supplier = new MockTravelSupplier();
     console.info("[duffel] Using MockTravelSupplier (no real DUFFEL_API_KEY)");
   } else {
-    // Stays/Cars often aren't enabled on test tokens — hybrid falls back to mock.
-    supplier = new HybridTravelSupplier(
-      new DuffelClient(key!),
-      new MockTravelSupplier(),
-    );
-    console.info(
-      "[duffel] Using HybridTravelSupplier (live flights; mock stays/cars if not enabled)",
-    );
+    supplier = new DuffelClient(key!);
+    console.info("[duffel] Using DuffelClient (live flights)");
   }
 
-  globalForSupplier.travelSupplier = supplier;
+  globalForSupplier.flightSupplier = supplier;
   return supplier;
 }
 
-/** True when offers may include synthetic hotel/car (or fully mock supplier). */
+/** @deprecated Use createFlightSupplier — kept for gradual call-site migration. */
+export function createTravelSupplier(): FlightSupplier {
+  return createFlightSupplier();
+}
+
+export function isMockFlightSupplier(): boolean {
+  return isMockKey(process.env.DUFFEL_API_KEY?.trim());
+}
+
+/** @deprecated Use isMockFlightSupplier / isMockHotelSupplier. */
 export function isMockTravelSupplier(): boolean {
-  const key = process.env.DUFFEL_API_KEY?.trim();
-  if (isMockKey(key)) return true;
-  const supplier = globalForSupplier.travelSupplier;
-  if (supplier instanceof HybridTravelSupplier) {
-    return supplier.usesMockStays();
-  }
-  return false;
+  return isMockFlightSupplier();
 }
 
 export { DuffelClient } from "./client";
-export { HybridTravelSupplier } from "./hybrid";
 export { MockTravelSupplier } from "./mock";
-export type * from "./types";
+export type {
+  FlightSearchParams,
+  CreateFlightOrderParams,
+  FlightSupplier,
+} from "../travel/types";

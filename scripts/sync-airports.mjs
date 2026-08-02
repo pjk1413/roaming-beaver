@@ -84,6 +84,8 @@ async function main() {
     const name = (row[idx.name] || "").trim();
     const city = (row[idx.municipality] || "").trim();
     const country = (row[idx.iso_country] || "").trim();
+    const lat = Number.parseFloat(row[idx.latitude_deg] || "");
+    const lng = Number.parseFloat(row[idx.longitude_deg] || "");
     const scheduled = row[idx.scheduled_service];
 
     if (!iata || iata.length !== 3) continue;
@@ -96,7 +98,9 @@ async function main() {
       city: city || name,
       name,
       country,
+      type,
       ...(icao.length === 4 ? { icao } : {}),
+      ...(Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : {}),
       _rank: typeRank[type] ?? 2,
     };
 

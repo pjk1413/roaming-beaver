@@ -3,7 +3,7 @@ import type { CheckoutRequest, DestinationPackage, Order } from "@mystery-trips/
 import { DestinationPackageSchema } from "@mystery-trips/types";
 import Stripe from "stripe";
 import { Resend } from "resend";
-import { createTravelSupplier } from "../duffel";
+import { createFlightSupplier, createHotelSupplier } from "../travel";
 
 function getStripe(): Stripe | null {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -84,7 +84,6 @@ export async function createOrderFromCheckout(
     destinationId: pkg.destinationId,
     flight: pkg.flightJson,
     hotel: pkg.hotelJson,
-    rentalCar: pkg.rentalCarJson,
     itinerary: pkg.itineraryJson,
     subtotalCents: pkg.subtotalCents,
     assemblyFeeCents: pkg.assemblyFeeCents,
@@ -92,12 +91,15 @@ export async function createOrderFromCheckout(
     currency: pkg.currency,
   });
 
-  // Revalidate offers before charging
-  const supplier = createTravelSupplier();
-  const flightOk = await supplier.revalidateFlightOffer(
+  // Revalidate offers before charging (Duffel flight + LiteAPI hotel)
+  const flightSupplier = createFlightSupplier();
+  const hotelSupplier = createHotelSupplier();
+  const flightOk = await flightSupplier.revalidateFlightOffer(
     snapshot.flight.duffelOfferId,
   );
-  const stayOk = await supplier.revalidateStayRate(snapshot.hotel.duffelRateId);
+  const stayOk = await hotelSupplier.revalidateStayRate(
+    snapshot.hotel.hotelRateId,
+  );
   if (!flightOk || !stayOk) {
     throw new Error(
       "Offers expired or changed. Please search again for fresh prices.",
@@ -105,15 +107,18 @@ export async function createOrderFromCheckout(
   }
 
   // Sync prices if they moved (still charge updated total)
-  const rentalCents = snapshot.rentalCar?.totalCents ?? 0;
-  const subtotal =
-    flightOk.totalCents + stayOk.totalCents + rentalCents;
+  const subtotal = flightOk.totalCents + stayOk.totalCents;
   const feeRate =
     pkg.subtotalCents > 0 ? pkg.assemblyFeeCents / pkg.subtotalCents : 0.08;
   const assemblyFeeCents = Math.round(subtotal * feeRate);
   const totalCents = subtotal + assemblyFeeCents;
 
-  snapshot.flight = { ...snapshot.flight, ...flightOk, outbound: flightOk.outbound, inbound: flightOk.inbound };
+  snapshot.flight = {
+    ...snapshot.flight,
+    ...flightOk,
+    outbound: flightOk.outbound,
+    inbound: flightOk.inbound,
+  };
   snapshot.hotel = {
     ...snapshot.hotel,
     ...stayOk,
@@ -228,7 +233,9 @@ export async function syncBuyerFromStripePaymentIntent(orderId: string) {
 }
 
 /**
- * After Stripe payment succeeds: book via Duffel Balance, email, or refund on failure.
+ * After Stripe payment succeeds: book hotel (LiteAPI) then flight (Duffel).
+ * Hotel first because a cancelled hotel is usually cleaner to unwind than an
+ * airline ticket. On any booking failure: cancel hotel if booked, refund Stripe.
  */
 export async function fulfillOrderAfterPayment(orderId: string) {
   await syncBuyerFromStripePaymentIntent(orderId);
@@ -247,15 +254,26 @@ export async function fulfillOrderAfterPayment(orderId: string) {
     familyName: string;
     bornOn?: string;
   }>;
-  const primary = travelers[0]!;
-  const supplier = createTravelSupplier();
+  const flightSupplier = createFlightSupplier();
+  const hotelSupplier = createHotelSupplier();
 
+  let hotelBookingId: string | undefined;
   let flightOrderId: string | undefined;
-  let stayBookingId: string | undefined;
-  let carBookingId: string | undefined;
 
   try {
-    const flight = await supplier.createFlightOrder({
+    // 1. Hotel first (easier to cancel than a ticketed flight)
+    const stay = await hotelSupplier.createStayBooking({
+      rateId: snapshot.hotel.hotelRateId,
+      guests: travelers.map((t) => ({
+        givenName: t.givenName,
+        familyName: t.familyName,
+      })),
+      email: order.email,
+    });
+    hotelBookingId = stay.id;
+
+    // 2. Flight via Duffel Balance
+    const flight = await flightSupplier.createFlightOrder({
       offerId: snapshot.flight.duffelOfferId,
       passengers: travelers.map((t) => ({
         givenName: t.givenName,
@@ -266,34 +284,12 @@ export async function fulfillOrderAfterPayment(orderId: string) {
     });
     flightOrderId = flight.id;
 
-    const stay = await supplier.createStayBooking({
-      rateId: snapshot.hotel.duffelRateId,
-      guests: travelers.map((t) => ({
-        givenName: t.givenName,
-        familyName: t.familyName,
-      })),
-      email: order.email,
-    });
-    stayBookingId = stay.id;
-
-    if (snapshot.rentalCar) {
-      const car = await supplier.createCarBooking({
-        quoteId: snapshot.rentalCar.duffelQuoteId,
-        drivers: [
-          { givenName: primary.givenName, familyName: primary.familyName },
-        ],
-        email: order.email,
-      });
-      carBookingId = car.id;
-    }
-
     const confirmed = await prisma.order.update({
       where: { id: orderId },
       data: {
         status: "CONFIRMED",
         duffelFlightOrderId: flightOrderId,
-        duffelStayBookingId: stayBookingId,
-        duffelCarBookingId: carBookingId ?? null,
+        hotelBookingId,
         userId: order.userId ?? (await ensureUserForEmail(order.email)),
       },
     });
@@ -303,9 +299,24 @@ export async function fulfillOrderAfterPayment(orderId: string) {
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(
-      `[checkout] CRITICAL: Duffel booking failed after payment for order ${orderId}:`,
+      `[checkout] CRITICAL: supplier booking failed after payment for order ${orderId}:`,
       reason,
     );
+
+    if (hotelBookingId) {
+      try {
+        await hotelSupplier.cancelStayBooking(hotelBookingId);
+        console.info(
+          `[checkout] Cancelled hotel booking ${hotelBookingId} after flight failure for order ${orderId}`,
+        );
+      } catch (cancelErr) {
+        // Money moved + hotel may still exist with no matching flight — page ops.
+        console.error(
+          `[checkout] CRITICAL OPS: hotel cancel failed for order ${orderId}, hotelBookingId=${hotelBookingId}. Manual intervention required.`,
+          cancelErr instanceof Error ? cancelErr.message : cancelErr,
+        );
+      }
+    }
 
     await refundOrder(orderId, reason);
     throw err;
@@ -369,8 +380,7 @@ async function sendConfirmationEmail(
       <p>Order <strong>${order.id}</strong> is confirmed.</p>
       <ul>
         <li>Flight: ${order.duffelFlightOrderId ?? "—"}</li>
-        <li>Hotel: ${order.duffelStayBookingId ?? "—"}</li>
-        ${order.duffelCarBookingId ? `<li>Car: ${order.duffelCarBookingId}</li>` : ""}
+        <li>Hotel: ${order.hotelBookingId ?? "—"}</li>
       </ul>
       <p>Total paid: $${(order.totalCents / 100).toFixed(2)} ${order.currency}</p>
     `,
@@ -386,8 +396,7 @@ export function toOrderDto(order: {
   currency: string;
   stripePaymentIntentId: string | null;
   duffelFlightOrderId: string | null;
-  duffelStayBookingId: string | null;
-  duffelCarBookingId: string | null;
+  hotelBookingId: string | null;
   createdAt: Date;
 }): Order {
   return {
@@ -399,8 +408,7 @@ export function toOrderDto(order: {
     currency: order.currency,
     stripePaymentIntentId: order.stripePaymentIntentId,
     duffelFlightOrderId: order.duffelFlightOrderId,
-    duffelStayBookingId: order.duffelStayBookingId,
-    duffelCarBookingId: order.duffelCarBookingId,
+    hotelBookingId: order.hotelBookingId,
     createdAt: order.createdAt.toISOString(),
   };
 }

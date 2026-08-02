@@ -3,7 +3,8 @@ import {
   getSearchStatus,
   requestFromSearch,
   runSearchSlots,
-  isMockTravelSupplier,
+  isMockFlightSupplier,
+  isMockHotelSupplier,
   type SearchStreamEvent,
 } from "@mystery-trips/api";
 
@@ -34,7 +35,7 @@ export async function GET(
 
   const encoder = new TextEncoder();
   let closed = false;
-  const mock = isMockTravelSupplier();
+  const mock = isMockFlightSupplier() || isMockHotelSupplier();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -144,7 +145,7 @@ async function pollUntilDone(
 ) {
   const seen = new Set<string>();
   const seenErrors = new Set<string>();
-  const mock = isMockTravelSupplier();
+  const mock = isMockFlightSupplier() || isMockHotelSupplier();
 
   for (let i = 0; i < 120; i++) {
     if (isClosed()) return;

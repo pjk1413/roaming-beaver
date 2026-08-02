@@ -5,6 +5,7 @@ import {
   type ItineraryItem,
 } from "@mystery-trips/types";
 import { z } from "zod";
+import { openaiChatModel, openaiTemperature } from "../openai-params";
 
 const ResponseSchema = z.object({
   items: z.array(ItineraryItemSchema).min(1),
@@ -42,9 +43,9 @@ export async function generateItinerary(
   try {
     const days = input.nights + 1;
     const completion = await client.chat.completions.create({
-      model: process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
+      model: openaiChatModel(),
       response_format: { type: "json_object" },
-      temperature: 0.7,
+      ...openaiTemperature(0.7),
       messages: [
         {
           role: "system",
