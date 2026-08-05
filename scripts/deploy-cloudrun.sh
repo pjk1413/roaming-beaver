@@ -34,7 +34,7 @@ docker build \
 
 docker push "${IMAGE}:manual"
 
-echo "Deploying ${SERVICE} (min-instances=0, cpu-boost, concurrency=80)…"
+echo "Deploying ${SERVICE} (image only; runtime env/secrets unchanged)…"
 gcloud run deploy "${SERVICE}" \
   --project "${PROJECT_ID}" \
   --image "${IMAGE}:manual" \
@@ -47,9 +47,7 @@ gcloud run deploy "${SERVICE}" \
   --memory 1Gi \
   --min-instances 0 \
   --max-instances 20 \
-  --cpu-boost \
-  --set-env-vars "NODE_ENV=production" \
-  --set-secrets "DATABASE_URL=DATABASE_URL:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,DUFFEL_API_KEY=DUFFEL_API_KEY:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest,RESEND_API_KEY=RESEND_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:latest"
+  --cpu-boost
 
 echo "Done. Service URL:"
 gcloud run services describe "${SERVICE}" --region "${REGION}" --format='value(status.url)'

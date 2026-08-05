@@ -104,22 +104,6 @@ jobs:
             --min-instances=0
             --max-instances=20
             --cpu-boost
-          env_vars: |
-            NODE_ENV=production
-            ASSEMBLY_FEE_RATE=${{ vars.ASSEMBLY_FEE_RATE || '0.08' }}
-            OPENAI_MODEL=${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
-            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
-            NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-          secrets: |
-            DATABASE_URL=DATABASE_URL:latest
-            SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest
-            DUFFEL_API_KEY=DUFFEL_API_KEY:latest
-            STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest
-            STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
-            RESEND_API_KEY=RESEND_API_KEY:latest
-            OPENAI_API_KEY=OPENAI_API_KEY:latest
-            NEXT_PUBLIC_SUPABASE_ANON_KEY=NEXT_PUBLIC_SUPABASE_ANON_KEY:latest
-            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:latest
 
       - name: Summary
         run: |
@@ -128,4 +112,5 @@ jobs:
           echo "- **Image:** \`${{ steps.meta.outputs.full }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- **URL:** ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "If this is the first deploy, set \`NEXT_PUBLIC_APP_URL\` repo variable to that URL and re-run so client-side auth redirects match." >> "$GITHUB_STEP_SUMMARY"
+          echo "Runtime env/secrets are left as configured on the Cloud Run service (not overwritten by deploy)." >> "$GITHUB_STEP_SUMMARY"
+          echo "If this is the first deploy, set env in Cloud Run, set \`NEXT_PUBLIC_APP_URL\` repo variable to the service URL, and re-run so the client build embeds it." >> "$GITHUB_STEP_SUMMARY"
