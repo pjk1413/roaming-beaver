@@ -45,11 +45,24 @@ jobs:
           REPO="${{ vars.GCP_ARTIFACT_REPO || 'roaming-beaver' }}"
           SHA_SHORT="${GITHUB_SHA::7}"
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}"
+          echo "project_id=${PROJECT_ID}" >> "$GITHUB_OUTPUT"
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "tag=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
           echo "full=${IMAGE}:${SHA_SHORT}" >> "$GITHUB_OUTPUT"
           echo "latest=${IMAGE}:latest" >> "$GITHUB_OUTPUT"
           echo "Using image ${IMAGE}:${SHA_SHORT}"
+
+      - name: Ensure Artifact Registry repo
+        run: |
+          REPO="${{ steps.meta.outputs.repo }}"
+          if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" &>/dev/null; then
+            echo "Creating Artifact Registry repo ${REPO} in ${REGION}…"
+            gcloud artifacts repositories create "${REPO}" \
+              --repository-format=docker \
+              --location="${REGION}" \
+              --description="Roaming Beaver images"
+          fi
 
       - name: Build Docker image
         run: |

@@ -12,7 +12,16 @@ REPO="roaming-beaver"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}"
 
 gcloud config set project "${PROJECT_ID}"
+gcloud services enable artifactregistry.googleapis.com --quiet
 gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" &>/dev/null; then
+  echo "Creating Artifact Registry repo ${REPO} in ${REGION}…"
+  gcloud artifacts repositories create "${REPO}" \
+    --repository-format=docker \
+    --location="${REGION}" \
+    --description="Roaming Beaver images"
+fi
 
 echo "Building ${IMAGE}:manual…"
 docker build \

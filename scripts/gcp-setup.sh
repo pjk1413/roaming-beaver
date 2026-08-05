@@ -43,7 +43,7 @@ fi
 
 for ROLE in \
   roles/run.admin \
-  roles/artifactregistry.writer \
+  roles/artifactregistry.admin \
   roles/iam.serviceAccountUser \
   roles/secretmanager.secretAccessor
 do

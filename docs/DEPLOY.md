@@ -129,7 +129,7 @@ roles only.
 
 | Symptom | Fix |
 |---------|-----|
-| `Permission denied` on Artifact Registry | Re-run `gcp-setup.sh`; confirm SA has `artifactregistry.writer` |
+| `Permission denied` on Artifact Registry | Re-run `gcp-setup.sh`; confirm SA has `artifactregistry.admin` |
 | `secret not found` on deploy | Create/fill the secret names listed above |
 | Auth redirect to localhost | Set `NEXT_PUBLIC_APP_URL` and redeploy |
 | Cold start feels slow | Expected with `min-instances=0`; cpu-boost is already on |
