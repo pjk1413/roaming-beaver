@@ -130,8 +130,17 @@ roles only.
 | Symptom | Fix |
 |---------|-----|
 | `Repository "…" not found` on docker push | `GCP_PROJECT_ID` must be the **GCP project id** (e.g. `kitchensinkworks`), not the GitHub repo name. It must match the project in `GCP_SA_KEY`. |
+| `Permission denied on secret` for `…-compute@…` | Grant Secret Accessor to the Cloud Run runtime SA (see below) |
 | `Permission denied` on Artifact Registry | Re-run `gcp-setup.sh`; confirm SA has `artifactregistry.admin` |
 | `secret not found` on deploy | Create/fill the secret names listed above |
 | Auth redirect to localhost | Set `NEXT_PUBLIC_APP_URL` and redeploy |
 | Cold start feels slow | Expected with `min-instances=0`; cpu-boost is already on |
 | Prisma / DB errors | Check `DATABASE_URL` (use Supabase pooler or direct URI with SSL) |
+
+Grant Cloud Run access to secrets (one-time, as project Owner/Editor):
+
+```bash
+gcloud projects add-iam-policy-binding kitchensinkworks \
+  --member="serviceAccount:783693588605-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```

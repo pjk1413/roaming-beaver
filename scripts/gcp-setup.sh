@@ -76,15 +76,15 @@ for S in "${SECRETS[@]}"; do
     --quiet >/dev/null || true
 done
 
-# Cloud Run runtime SA also needs secret access (default compute SA)
+# Cloud Run runtime SA also needs secret access (default compute SA).
+# Project-level binding covers all secrets, including ones created later.
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
 RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
-for S in "${SECRETS[@]}"; do
-  gcloud secrets add-iam-policy-binding "${S}" \
-    --member="serviceAccount:${RUNTIME_SA}" \
-    --role="roles/secretmanager.secretAccessor" \
-    --quiet >/dev/null || true
-done
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --condition=None \
+  --quiet >/dev/null
 
 KEY_HINT="gcloud iam service-accounts keys create ./gcp-sa-key.json --iam-account=${SA_EMAIL}"
 
