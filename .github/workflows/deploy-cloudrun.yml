@@ -42,6 +42,11 @@ jobs:
             echo "::error::GCP_PROJECT_ID variable is empty. Set it under Settings → Secrets and variables → Actions → Variables."
             exit 1
           fi
+          AUTH_PROJECT="${CLOUDSDK_CORE_PROJECT:-${GOOGLE_CLOUD_PROJECT:-}}"
+          if [[ -n "${AUTH_PROJECT}" && "${AUTH_PROJECT}" != "${PROJECT_ID}" ]]; then
+            echo "::error::GCP_PROJECT_ID is '${PROJECT_ID}' but GCP_SA_KEY belongs to project '${AUTH_PROJECT}'. Set the GitHub variable GCP_PROJECT_ID to '${AUTH_PROJECT}' (your real GCP project id, not the GitHub repo name)."
+            exit 1
+          fi
           REPO="${{ vars.GCP_ARTIFACT_REPO || 'roaming-beaver' }}"
           SHA_SHORT="${GITHUB_SHA::7}"
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${SERVICE}"
@@ -55,10 +60,13 @@ jobs:
 
       - name: Ensure Artifact Registry repo
         run: |
+          PROJECT_ID="${{ steps.meta.outputs.project_id }}"
           REPO="${{ steps.meta.outputs.repo }}"
-          if ! gcloud artifacts repositories describe "${REPO}" --location="${REGION}" &>/dev/null; then
-            echo "Creating Artifact Registry repo ${REPO} in ${REGION}…"
+          if ! gcloud artifacts repositories describe "${REPO}" \
+            --project="${PROJECT_ID}" --location="${REGION}" &>/dev/null; then
+            echo "Creating Artifact Registry repo ${REPO} in ${REGION} (project ${PROJECT_ID})…"
             gcloud artifacts repositories create "${REPO}" \
+              --project="${PROJECT_ID}" \
               --repository-format=docker \
               --location="${REGION}" \
               --description="Roaming Beaver images"

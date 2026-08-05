@@ -129,6 +129,7 @@ roles only.
 
 | Symptom | Fix |
 |---------|-----|
+| `Repository "…" not found` on docker push | `GCP_PROJECT_ID` must be the **GCP project id** (e.g. `kitchensinkworks`), not the GitHub repo name. It must match the project in `GCP_SA_KEY`. |
 | `Permission denied` on Artifact Registry | Re-run `gcp-setup.sh`; confirm SA has `artifactregistry.admin` |
 | `secret not found` on deploy | Create/fill the secret names listed above |
 | Auth redirect to localhost | Set `NEXT_PUBLIC_APP_URL` and redeploy |
